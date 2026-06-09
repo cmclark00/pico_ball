@@ -22,12 +22,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install toolchain
+      # Ubuntu's gcc-arm-none-eabi apt package ships incomplete C++ newlib
+      # headers (the SDK compiles a couple of .cpp files), so use the official
+      # Arm GNU toolchain instead.
+      - name: Install Arm GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "13.2.Rel1"
+
+      - name: Install build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential \
-            pkg-config libusb-1.0-0-dev
+            cmake build-essential pkg-config libusb-1.0-0-dev
 
       - name: Checkout Pico SDK
         uses: actions/checkout@v4
