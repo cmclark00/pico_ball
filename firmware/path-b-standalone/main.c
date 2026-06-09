@@ -69,21 +69,21 @@ static void blink_gen(void) {
     }
 }
 
-// Called just after a button press (button down). Classifies the gesture:
-// returns 2 for a double-tap, else 1. Bounded so it can never hang.
-static int read_taps(void) {
-    sleep_ms(30);                                                   // debounce press
-    for (int i = 0; i < 120 && ui_button_down(); i++) sleep_ms(10); // wait for release
-    sleep_ms(30);                                                   // debounce release
-    for (int i = 0; i < 35; i++) {                                  // ~350 ms for a 2nd tap
-        if (ui_button_down()) {
-            sleep_ms(30);
-            for (int j = 0; j < 120 && ui_button_down(); j++) sleep_ms(10);
-            return 2;
-        }
+// Hold this long to switch generations (vs a short tap to capture).
+#define HOLD_US 700000  // 0.7 s
+
+// Called just after a button press (button down). Returns true if the button is
+// held past the hold threshold (a "switch generation" gesture), false if it was
+// a short tap (a "capture" gesture). On a hold it returns as soon as the
+// threshold is crossed — the button may still be down.
+static bool read_hold(void) {
+    sleep_ms(30);  // debounce press
+    absolute_time_t start = get_absolute_time();
+    while (ui_button_down()) {
+        if (absolute_time_diff_us(start, get_absolute_time()) >= HOLD_US) return true;
         sleep_ms(10);
     }
-    return 1;
+    return false;  // released before the threshold
 }
 
 static void do_capture(void) {
@@ -134,7 +134,7 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Single tap = capture (Gen %d). Double tap = switch Gen 1 <-> Gen 2.\n",
+           "Tap = capture (Gen %d). Hold ~1s = switch Gen 1 <-> Gen 2.\n",
            storage_count(), storage_capacity(), current_gen);
     show_idle();
 
@@ -144,15 +144,16 @@ int main(void) {
 
         bool now = ui_button_down();
         if (now && !prev) {
-            if (read_taps() >= 2) {           // double tap: toggle generation
+            if (read_hold()) {                // hold: toggle generation
                 current_gen = (current_gen == 1) ? 2 : 1;
-                printf("GEN %d (button)\n", current_gen);
-                blink_gen();
-            } else {                          // single tap: capture
+                printf("GEN %d (hold)\n", current_gen);
+                blink_gen();                  // confirm; user can release now
+                while (ui_button_down()) sleep_ms(10);  // wait for release
+            } else {                          // tap: capture
                 do_capture();
             }
             show_idle();
-            prev = false;  // button already released inside read_taps()
+            prev = false;  // button already released
             continue;
         }
         prev = now;
