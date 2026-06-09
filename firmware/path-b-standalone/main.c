@@ -51,6 +51,41 @@ static int read_uint(void) {
     return val;
 }
 
+// Idle LED shows the selected generation: dim white = Gen 1, dim purple = Gen 2.
+static void show_idle(void) {
+    if (current_gen == 2) ui_color(12, 0, 18);
+    else ui_color(6, 6, 6);
+}
+
+// Confirm a generation change by pulsing `current_gen` times:
+// 1x green = Gen 1 (R/B/Y), 2x blue = Gen 2 (G/S/C).
+static void blink_gen(void) {
+    for (int i = 0; i < current_gen; i++) {
+        if (current_gen == 2) ui_color(0, 0, 60);
+        else ui_color(0, 60, 0);
+        sleep_ms(180);
+        ui_color(0, 0, 0);
+        sleep_ms(160);
+    }
+}
+
+// Called just after a button press (button down). Classifies the gesture:
+// returns 2 for a double-tap, else 1. Bounded so it can never hang.
+static int read_taps(void) {
+    sleep_ms(30);                                                   // debounce press
+    for (int i = 0; i < 120 && ui_button_down(); i++) sleep_ms(10); // wait for release
+    sleep_ms(30);                                                   // debounce release
+    for (int i = 0; i < 35; i++) {                                  // ~350 ms for a 2nd tap
+        if (ui_button_down()) {
+            sleep_ms(30);
+            for (int j = 0; j < 120 && ui_button_down(); j++) sleep_ms(10);
+            return 2;
+        }
+        sleep_ms(10);
+    }
+    return 1;
+}
+
 static void do_capture(void) {
     const gen_profile_t *p = gen_profile(current_gen);
     printf("Armed (Gen %d). Sit at the Trade Center table and select a Pokémon...\n",
@@ -78,9 +113,9 @@ static void handle_serial(void) {
     switch (ch) {
         case 'd': dump_all(); break;
         case 'c': printf("COUNT %d/%d\n", storage_count(), storage_capacity()); break;
-        case 'a': do_capture(); ui_idle(); break;
-        case '1': current_gen = 1; printf("GEN 1\n"); break;
-        case '2': current_gen = 2; printf("GEN 2\n"); break;
+        case 'a': do_capture(); show_idle(); break;
+        case '1': current_gen = 1; printf("GEN 1\n"); show_idle(); break;
+        case '2': current_gen = 2; printf("GEN 2\n"); show_idle(); break;
         case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
         case 'r': {
             int n = read_uint();
@@ -98,9 +133,10 @@ int main(void) {
     ui_init();
 
     sleep_ms(300);
-    printf("\npico_ball standalone vault. Stored %d/%d. Hold the button to capture.\n",
-           storage_count(), storage_capacity());
-    ui_idle();
+    printf("\npico_ball standalone vault. Stored %d/%d.\n"
+           "Single tap = capture (Gen %d). Double tap = switch Gen 1 <-> Gen 2.\n",
+           storage_count(), storage_capacity(), current_gen);
+    show_idle();
 
     bool prev = false;
     while (true) {
@@ -108,8 +144,16 @@ int main(void) {
 
         bool now = ui_button_down();
         if (now && !prev) {
-            do_capture();
-            ui_idle();
+            if (read_taps() >= 2) {           // double tap: toggle generation
+                current_gen = (current_gen == 1) ? 2 : 1;
+                printf("GEN %d (button)\n", current_gen);
+                blink_gen();
+            } else {                          // single tap: capture
+                do_capture();
+            }
+            show_idle();
+            prev = false;  // button already released inside read_taps()
+            continue;
         }
         prev = now;
         sleep_ms(30);  // debounce + poll cadence

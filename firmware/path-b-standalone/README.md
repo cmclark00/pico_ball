@@ -26,12 +26,19 @@ cp firmware/prebuilt/pico_ball_vault.uf2 /media/$USER/RPI-RP2/
    only — no computer required (a USB power bank works).
 2. Boot Pokémon Blue → Pokémon Center → Cable Club → **Trade Center**, walk to
    the table.
-3. **Press the button** on the board (BOOTSEL). LED turns **blue** (armed).
-   - The button captures using the **currently selected generation** (default
-     Gen 1). To capture **Gen 2 (Gold/Silver/Crystal)**, first select it over
-     USB serial: send `2` (send `1` to go back). The WebUI's generation dropdown
-     does this for you. Gen 2 records are larger (1036 B vs 625 B) — the tools
-     tell them apart automatically.
+3. **Tap the button** on the board (BOOTSEL) to capture. LED turns **blue** (armed).
+
+### Button gestures (fully standalone — no PC needed)
+| Gesture | Action |
+|---|---|
+| **Single tap** | Capture, using the currently selected generation |
+| **Double tap** | Switch generation: Gen 1 (R/B/Y) ⇄ Gen 2 (G/S/C) |
+
+The **idle LED color shows the mode**: dim **white** = Gen 1, dim **purple** =
+Gen 2. After a double tap it confirms with a pulse: **1× green** = Gen 1,
+**2× blue** = Gen 2. (Over USB you can also send `1`/`2`, or use the WebUI's
+generation dropdown.) Gen 2 records are larger (1036 B vs 625 B) — the host tools
+tell them apart automatically.
 4. In-game, sit at the table and select your first Pokémon. The board streams a
    throwaway partner, records your party, and **never commits** — your cartridge
    keeps everything. LED turns **green** = captured & stored to flash.
@@ -40,7 +47,9 @@ cp firmware/prebuilt/pico_ball_vault.uf2 /media/$USER/RPI-RP2/
 ### LED states
 | Color | Meaning |
 |---|---|
-| dim white | idle / ready |
+| dim white | idle / ready — **Gen 1** mode |
+| dim purple | idle / ready — **Gen 2** mode |
+| 1× green / 2× blue pulse | generation switched to Gen 1 / Gen 2 |
 | blue | armed, waiting for / talking to the cartridge |
 | green | captured & stored ✅ |
 | amber | captured but the vault is full |
