@@ -23,11 +23,19 @@ void ui_color(uint8_t r, uint8_t g, uint8_t b) {
     pio_sm_put_blocking(ws_pio, ws_sm, grb << 8u);
 }
 
+static int tick_phase = 0;
+
 void ui_idle(void)  { ui_color(6, 6, 6); }
-void ui_armed(void) { ui_color(0, 0, 40); }
+void ui_armed(void) { tick_phase = 0; ui_color(0, 0, 40); }
 void ui_ok(void)    { ui_color(0, 40, 0); }
 void ui_full(void)  { ui_color(40, 24, 0); }
 void ui_error(void) { ui_color(40, 0, 0); }
+
+void ui_tick(void) {
+    tick_phase ^= 1;
+    // Alternate between a bright and dim blue so the pulse is clearly visible.
+    ui_color(0, tick_phase ? 10 : 0, tick_phase ? 55 : 20);
+}
 
 // Read the BOOTSEL button at runtime by briefly driving the QSPI CS pin as an
 // input. Must run from RAM (it disables XIP). Canonical RP2040 technique.

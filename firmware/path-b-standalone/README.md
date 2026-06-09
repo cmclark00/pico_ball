@@ -32,14 +32,14 @@ cp firmware/prebuilt/pico_ball_vault.uf2 /media/$USER/RPI-RP2/
 | Gesture | Action |
 |---|---|
 | **Tap** (short press) | Capture, using the currently selected generation |
-| **Hold ~1 s** | Switch generation: Gen 1 (R/B/Y) ⇄ Gen 2 (G/S/C) |
+| **Hold ~0.7 s** | Switch generation: Gen 1 (R/B/Y) ⇄ Gen 2 (G/S/C) |
+| **Hold ~2 s** | Inject dex slot 0 into a cartridge (LED turns amber to confirm) |
 
 The **idle LED color shows the mode**: dim **white** = Gen 1, dim **purple** =
-Gen 2. When you hold to switch, it confirms the new mode with a pulse the moment
-the hold registers (so you know to let go): **1× green** = Gen 1, **2× blue** =
-Gen 2. (Over USB you can also send `1`/`2`, or use the WebUI's generation
-dropdown.) Gen 2 records are larger (1036 B vs 625 B) — the host tools tell them
-apart automatically.
+Gen 2. When you hold to switch gen, it confirms with a pulse: **1× green** = Gen 1,
+**2× blue** = Gen 2. (Over USB you can also send `1`/`2`, or use the WebUI's
+generation dropdown.) Gen 2 records are larger (1036 B vs 625 B) — the host tools
+tell them apart automatically.
 
 **Capturing Crystal:** hold to switch to Gen 2 (idle LED → purple), sit at the
 Trade Center table (the game will say "your friend is not ready" — that's normal
@@ -49,16 +49,32 @@ until the board is armed), then tap to capture.
    keeps everything. LED turns **green** = captured & stored to flash.
 5. Press B in-game to leave the table. Capture more anytime; each is a new slot.
 
+### Inject mode (trade a stored Pokémon back into a cartridge)
+
+To inject a Pokémon from the dex back into a cartridge:
+1. Make sure the target gen is selected (tap gen-switch if needed).
+2. **Hold the button ~2 s** — LED turns **amber** to confirm the gesture fired.
+   Release the button.
+3. In-game: Cable Club → Trade Center → sit at the table. **Select the Pokémon
+   you want to give away** (the board will give you the stored one in return).
+4. LED turns **green** = trade committed. The Pokémon you gave away is
+   automatically saved back to the dex (it won't be lost).
+
+To choose which stored Pokémon to inject, connect USB and send `i <n>` (slot
+number, 0-indexed from the dex list printed by `d`). The last slot set via serial
+persists as the target for button presses.
+
 ### LED states
 | Color | Meaning |
 |---|---|
 | dim white | idle / ready — **Gen 1** mode |
 | dim purple | idle / ready — **Gen 2** mode |
 | 1× green / 2× blue pulse | generation switched to Gen 1 / Gen 2 (on hold) |
+| amber (brief flash) | inject threshold crossed — release to arm |
 | blue | armed, waiting for / talking to the cartridge |
-| green | captured & stored ✅ |
+| green | captured / injected & stored ✅ |
 | amber | captured but the vault is full |
-| red | failed / no cartridge responded |
+| red | failed / no cartridge responded / cancelled |
 
 ## Get the captures onto a PC
 
@@ -69,11 +85,21 @@ source host/.venv/bin/activate
 python host/import_standalone.py        # auto-detects the board, decodes to vault/dex/
 ```
 
-Or talk to it manually in any serial terminal (115200): send `c` for the dex
-count, `d` to dump the dex (one `MON <gen> <species> <len> <hex>` line per stored
-Pokémon, `struct + OT name + nickname`). `import_standalone.py` saves each as a
-`.pk1` + `.json` in `vault/dex/` (same format as Path A — so you can `inject.py`
-them back into a cartridge). The WebUI reads the same dump and shows the dex.
+Or talk to it manually in any serial terminal (115200):
+
+| Command | Effect |
+|---|---|
+| `c` | print dex count |
+| `d` | dump the dex (`MON <gen> <species> <len> <hex>` per entry) |
+| `a` | arm and run a capture (same as button tap) |
+| `i` or `i <n>` | inject dex slot n (default: last slot set; omit n to reuse) |
+| `1` / `2` | switch to Gen 1 / Gen 2 |
+| `r <n>` | delete dex slot n |
+| `w` | wipe the whole vault |
+
+`import_standalone.py` saves each dex entry as a `.pk1` + `.json` in `vault/dex/`
+(same format as Path A — so you can also use `inject.py` from a PC). The WebUI
+reads the same dump and shows the dex.
 
 ## Build from source
 

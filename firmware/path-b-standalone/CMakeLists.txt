@@ -14,6 +14,7 @@ target_sources(pico_ball_vault PRIVATE
         main.c
         gb_link.c
         capture.c
+        inject.c
         gen_profile.c
         storage.c
         ui.c

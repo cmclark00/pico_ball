@@ -14,6 +14,10 @@ void ui_ok(void);       // green: captured & stored
 void ui_full(void);     // amber: captured but vault full
 void ui_error(void);    // red: failed / no game
 
+// Call during long blocking operations to show activity via LED pulsing.
+// Alternates between two blue shades; resets on each call to ui_armed().
+void ui_tick(void);
+
 // True while the BOOTSEL button is held down (raw, undebounced).
 bool ui_button_down(void);
 

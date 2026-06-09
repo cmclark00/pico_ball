@@ -29,6 +29,11 @@ typedef struct {
 // Per-mon record we store in the dex = struct + OT name + nickname.
 #define DEX_MON_MAX (0x30 + 2 * 0x0B)  // 70 (Gen 2 is the larger)
 
+// Max section-1 size across generations (Gen 2 = 444 > Gen 1 = 418).
+#define GB_SEC1_MAX 444
+// Patch-list section size (same for Gen 1 and Gen 2).
+#define GB_SEC2_LEN 197
+
 const gen_profile_t *gen_profile(int gen);
 
 #endif // GEN_PROFILE_H

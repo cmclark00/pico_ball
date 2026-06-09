@@ -1,5 +1,6 @@
 #include "capture.h"
 #include "gb_link.h"
+#include "ui.h"
 #include <string.h>
 
 #define NO_INPUT 0xFE
@@ -22,11 +23,12 @@ static bool send_predefined(const uint8_t *send, const uint8_t *const *sets,
         uint8_t recv = gb_link_swap(send[idx]);
         if (in_set(recv, sets[idx], set_lens[idx])) idx++;
         if (++swaps >= max_swaps) return false;
+        if ((swaps & 0x3F) == 0) ui_tick();  // pulse every ~64 swaps (~1.3 s)
     }
     return true;
 }
 
-static bool enter_room(int gen) {
+bool trade_enter_room(int gen) {
     if (gen == 2) {  // GSC enter_room_states
         static const uint8_t send[5] = {0x01, 0x61, 0xD1, 0x00, 0xFE};
         static const uint8_t a[] = {0x61}, b[] = {0xD1}, c[] = {0x00}, d[] = {0xFE};
@@ -42,7 +44,7 @@ static bool enter_room(int gen) {
     return send_predefined(send, sets, lens, 4, MAX_HANDSHAKE_SWAPS);
 }
 
-static bool sit_to_table(int gen) {
+bool trade_sit_to_table(int gen) {
     if (gen == 2) {  // GSC start_trading_states
         static const uint8_t send[3] = {0x75, 0x75, 0x76};
         static const uint8_t a[] = {0x75}, b[] = {0x00}, c[] = {0xFD};
@@ -59,8 +61,8 @@ static bool sit_to_table(int gen) {
 
 // Buffered exchange of one section: sync onto its preamble byte, then stream our
 // baked bytes while recording the cartridge's `len` bytes into out[0..len-1].
-static bool capture_section(int index, uint8_t starter, bool sync, uint8_t preamble,
-                            const uint8_t *baked, int len, uint8_t *out) {
+bool trade_capture_section(int index, uint8_t starter, bool sync, uint8_t preamble,
+                           const uint8_t *baked, int len, uint8_t *out) {
     uint8_t next = sync ? NO_INPUT : starter;
     uint8_t recv = next;
     int swaps = 0;
@@ -85,20 +87,23 @@ static bool capture_section(int index, uint8_t starter, bool sync, uint8_t pream
     }
 
     out[0] = next;
-    for (int i = 0; i < len - 1; i++) out[i + 1] = gb_link_swap(baked[i]);
+    for (int i = 0; i < len - 1; i++) {
+        out[i + 1] = gb_link_swap(baked[i]);
+        if ((i & 0x0F) == 0) ui_tick();  // pulse every 16 bytes (~0.3 s)
+    }
     gb_link_swap(baked[len - 1]);  // last byte; its reply isn't part of the data
     return true;
 }
 
 gb_capture_result_t capture_run(const gen_profile_t *p, uint8_t *out) {
-    if (!enter_room(p->gen)) return GB_CAP_NO_GAME;
-    if (!sit_to_table(p->gen)) return GB_CAP_NO_GAME;
+    if (!trade_enter_room(p->gen))   return GB_CAP_NO_GAME;
+    if (!trade_sit_to_table(p->gen)) return GB_CAP_NO_GAME;
 
     int off = 0;
     for (int s = 0; s < p->n_sections; s++) {
         int len = p->lens[s];
-        if (!capture_section(s, p->starters[s], p->syncs[s], p->preamble[s],
-                             p->baked[s], len, out + off))
+        if (!trade_capture_section(s, p->starters[s], p->syncs[s], p->preamble[s],
+                                   p->baked[s], len, out + off))
             return GB_CAP_SECTION;
         off += len;
     }

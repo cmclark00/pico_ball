@@ -7,13 +7,20 @@
 //   'c'      -> print stored count
 //   'd'      -> dump all stored records as hex (import_standalone.py / WebUI read)
 //   'a'      -> arm/run a capture now (same as pressing the button)
-//   '1'/'2'  -> select generation (1 = R/B/Y, 2 = G/S/C) for the next capture
+//   'i' <n>  -> inject slot n (default 0) back into a cartridge
+//   '1'/'2'  -> select generation (1 = R/B/Y, 2 = G/S/C) for the next operation
 //   'r' <n>  -> delete record n (digits terminated by newline)
 //   'w'      -> wipe the whole vault
+//
+// Button gestures:
+//   Tap        -> capture (current gen)
+//   Hold ~0.7s -> switch gen (Gen 1 <-> Gen 2)
+//   Hold ~2s   -> inject slot 0 of current gen (LED turns amber briefly to confirm)
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "gb_link.h"
 #include "capture.h"
+#include "inject.h"
 #include "gen_profile.h"
 #include "storage.h"
 #include "ui.h"
@@ -21,6 +28,7 @@
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
+static int inject_slot = 0;  // which dex slot to inject (by index into stored list)
 
 static void dump_all(void) {
     int n = storage_count();
@@ -70,21 +78,28 @@ static void blink_gen(void) {
     }
 }
 
-// Hold this long to switch generations (vs a short tap to capture).
-#define HOLD_US 700000  // 0.7 s
+// Hold thresholds.
+#define HOLD_GEN_US  700000   // 0.7 s: switch generation (release before inject threshold)
+#define HOLD_INJ_US 2000000   // 2.0 s: inject (LED turns amber; return while still held)
 
-// Called just after a button press (button down). Returns true if the button is
-// held past the hold threshold (a "switch generation" gesture), false if it was
-// a short tap (a "capture" gesture). On a hold it returns as soon as the
-// threshold is crossed — the button may still be down.
-static bool read_hold(void) {
+typedef enum { GESTURE_TAP, GESTURE_SWITCH_GEN, GESTURE_INJECT } gesture_t;
+
+// Called just after a button press (button down). Returns which gesture was
+// performed. GESTURE_INJECT fires as soon as the hold crosses 2 s (button may
+// still be held); the others return after the button is released.
+static gesture_t read_gesture(void) {
     sleep_ms(30);  // debounce press
     absolute_time_t start = get_absolute_time();
     while (ui_button_down()) {
-        if (absolute_time_diff_us(start, get_absolute_time()) >= HOLD_US) return true;
+        uint64_t us = absolute_time_diff_us(start, get_absolute_time());
+        if (us >= HOLD_INJ_US) {
+            ui_color(40, 24, 0);  // amber: inject threshold crossed
+            return GESTURE_INJECT;
+        }
         sleep_ms(10);
     }
-    return false;  // released before the threshold
+    return (absolute_time_diff_us(start, get_absolute_time()) >= HOLD_GEN_US)
+           ? GESTURE_SWITCH_GEN : GESTURE_TAP;
 }
 
 static void do_capture(void) {
@@ -120,12 +135,67 @@ static void do_capture(void) {
     sleep_ms(2500);
 }
 
+static void do_inject(int slot) {
+    const gen_profile_t *p = gen_profile(current_gen);
+
+    int mon_gen = 0, species = 0;
+    uint16_t len = storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
+
+    if (len == 0) {
+        printf("INJECT slot %d: empty\n", slot);
+        ui_error();
+        sleep_ms(2000);
+        return;
+    }
+    if (mon_gen != current_gen) {
+        printf("INJECT slot %d: Gen %d but current gen is %d\n",
+               slot, mon_gen, current_gen);
+        ui_error();
+        sleep_ms(2000);
+        return;
+    }
+
+    printf("Inject slot %d (Gen %d species 0x%02X). "
+           "Cable Club -> Trade Center -> sit at table, pick the Pokémon to give away.\n",
+           slot, mon_gen, species);
+    ui_armed();
+
+    gb_inject_result_t r = inject_run(p, record, len);
+    switch (r) {
+        case GB_INJ_OK:
+            printf("INJECT_RESULT ok\n");
+            ui_ok();
+            break;
+        case GB_INJ_CANCELLED:
+            printf("INJECT_RESULT cancelled\n");
+            ui_error();
+            break;
+        case GB_INJ_DECLINED:
+            printf("INJECT_RESULT declined\n");
+            ui_error();
+            break;
+        default:
+            printf("INJECT_RESULT fail %d\n", (int)r);
+            ui_error();
+            break;
+    }
+    sleep_ms(2500);
+}
+
 static void handle_serial(void) {
     int ch = getchar_timeout_us(0);
     switch (ch) {
         case 'd': dump_all(); break;
         case 'c': printf("COUNT %d/%d\n", storage_count(), storage_capacity()); break;
         case 'a': do_capture(); show_idle(); break;
+        case 'i': {
+            int n = read_uint();
+            if (n < 0) n = inject_slot;
+            else inject_slot = n;
+            do_inject(n);
+            show_idle();
+            break;
+        }
         case '1': current_gen = 1; printf("GEN 1\n"); show_idle(); break;
         case '2': current_gen = 2; printf("GEN 2\n"); show_idle(); break;
         case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
@@ -146,8 +216,10 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Tap = capture (Gen %d). Hold ~1s = switch Gen 1 <-> Gen 2.\n",
-           storage_count(), storage_capacity(), current_gen);
+           "Tap = capture | Hold ~0.7s = switch gen | Hold ~2s = inject slot 0\n"
+           "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'=gen 'r n'=delete 'w'=wipe\n"
+           "Current: Gen %d. Inject slot: %d.\n",
+           storage_count(), storage_capacity(), current_gen, inject_slot);
     show_idle();
 
     bool prev = false;
@@ -156,16 +228,20 @@ int main(void) {
 
         bool now = ui_button_down();
         if (now && !prev) {
-            if (read_hold()) {                // hold: toggle generation
+            gesture_t g = read_gesture();
+            if (g == GESTURE_INJECT) {
+                while (ui_button_down()) sleep_ms(10);  // wait for release
+                do_inject(inject_slot);
+            } else if (g == GESTURE_SWITCH_GEN) {
                 current_gen = (current_gen == 1) ? 2 : 1;
                 printf("GEN %d (hold)\n", current_gen);
-                blink_gen();                  // confirm; user can release now
+                blink_gen();
                 while (ui_button_down()) sleep_ms(10);  // wait for release
-            } else {                          // tap: capture
+            } else {                          // GESTURE_TAP: capture
                 do_capture();
             }
             show_idle();
-            prev = false;  // button already released
+            prev = false;
             continue;
         }
         prev = now;

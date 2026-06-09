@@ -17,6 +17,12 @@ typedef enum {
 // profile->record_len bytes) holds the cartridge's concatenated section bytes.
 gb_capture_result_t capture_run(const gen_profile_t *p, uint8_t *out);
 
+// Low-level helpers also used by inject.c.
+bool trade_enter_room(int gen);
+bool trade_sit_to_table(int gen);
+bool trade_capture_section(int index, uint8_t starter, bool sync, uint8_t preamble,
+                            const uint8_t *baked, int len, uint8_t *out);
+
 // Split a captured raw record into individual Pokémon (struct + OT + nickname
 // each). Applies the patch list, then copies up to 6 mons into data[]/lens[]
 // and their species into species[]. Returns the party count (0 on bad data).
