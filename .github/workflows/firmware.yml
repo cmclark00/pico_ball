@@ -1,0 +1,57 @@
+name: Build firmware
+
+# Builds the standalone (Path B) RP2040 firmware and uploads the .uf2 artifact.
+on:
+  push:
+    paths:
+      - "firmware/path-b-standalone/**"
+      - ".github/workflows/firmware.yml"
+  pull_request:
+    paths:
+      - "firmware/path-b-standalone/**"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+      # Pin the SDK for reproducible builds; bump deliberately.
+      PICO_SDK_REF: "2.1.1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential \
+            pkg-config libusb-1.0-0-dev
+
+      - name: Checkout Pico SDK
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ env.PICO_SDK_REF }}
+          path: pico-sdk
+          submodules: false
+
+      - name: Init TinyUSB submodule
+        run: git -C pico-sdk submodule update --init --depth 1 lib/tinyusb
+
+      - name: Configure & build
+        run: |
+          cmake -S firmware/path-b-standalone -B firmware/path-b-standalone/build \
+                -DCMAKE_BUILD_TYPE=Release
+          cmake --build firmware/path-b-standalone/build -j "$(nproc)"
+
+      - name: Show artifact info
+        run: ls -la firmware/path-b-standalone/build/pico_ball_vault.uf2
+
+      - name: Upload UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: pico_ball_vault-uf2
+          path: firmware/path-b-standalone/build/pico_ball_vault.uf2
+          if-no-files-found: error

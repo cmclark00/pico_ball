@@ -1,5 +1,7 @@
 # pico_ball — carry your Pokémon out of a real cartridge
 
+[![Build firmware](https://github.com/cmclark00/pico_ball/actions/workflows/firmware.yml/badge.svg)](https://github.com/cmclark00/pico_ball/actions/workflows/firmware.yml)
+
 Turn a [`weimanc/game-boy-zero-link-board`](https://github.com/weimanc/game-boy-zero-link-board)
 (an RP2040‑Zero USB↔Game Boy Link‑Cable adapter) into a tool that talks to your
 **physical Pokémon Blue** cartridge over the link port and **copies a Pokémon off
@@ -99,6 +101,20 @@ third_party/               (created by setup.sh) the MIT trade engine we reuse
 - [`stacksmashing/gb-link-firmware`](https://github.com/stacksmashing/gb-link-firmware) — RP2040 link‑cable firmware (MIT).
 - [`Lorenzooone/PokemonGB_Online_Trades`](https://github.com/Lorenzooone/PokemonGB_Online_Trades) — the proven, sanity‑checked Gen 1/2/3 trade engine we reuse for Path A (MIT).
 - [`kbembedded/Flipper-Zero-Game-Boy-Pokemon-Trading`](https://github.com/kbembedded/Flipper-Zero-Game-Boy-Pokemon-Trading) — proof + reference that the standalone Path B is feasible (MIT).
+
+## License
+
+[MIT](LICENSE) for this project's own code. Vendored third‑party files (the Pico
+SDK PIO helpers under `firmware/path-b-standalone/`) retain their own BSD‑3‑Clause
+headers; the reused trade engine and bridge firmware are MIT and fetched/built at
+setup time rather than redistributed here. See [LICENSE](LICENSE) for details.
+
+## Continuous integration
+
+`.github/workflows/firmware.yml` builds the standalone firmware on every change to
+`firmware/path-b-standalone/` (Pico SDK pinned to a fixed version) and uploads the
+`pico_ball_vault.uf2` as a workflow artifact. Trigger it manually from the Actions
+tab via *Run workflow*.
 
 ## Legal / ethics
 
