@@ -1,30 +1,30 @@
-// Persistent vault in the RP2040's own flash. Two banks — one per generation
-// (Gen 1, Gen 2) — in a reserved region near the top of flash. Re-capturing a
-// generation overwrites its bank. Survives power-off; this is what makes the
-// board a carry-around vault.
+// Persistent dex in the RP2040's own flash: one slot per (generation, species),
+// so the vault accumulates a living Pokédex. Capturing a party upserts each
+// Pokémon by species — recapturing a species overwrites just that entry, new
+// species are added. Survives power-off.
 #ifndef STORAGE_H
 #define STORAGE_H
 #include <stdint.h>
 #include <stdbool.h>
 
-// Number of banks currently occupied (0..2).
+// Number of dex entries currently stored.
 int storage_count(void);
 
-// Total banks (2).
+// Total slots available (across both generations).
 int storage_capacity(void);
 
-// Store this generation's latest party, overwriting that generation's bank.
-// gen is 1 or 2. Returns false only if gen/len is invalid.
-bool storage_put(int gen, const uint8_t *payload, uint16_t len);
+// Upsert one Pokémon into the dex by (gen, species). gen is 1 or 2; species is
+// the in-data species byte (1..255). Returns false on invalid args.
+bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len);
 
-// Read record `index` (0..count-1) into `out` (>= 800 bytes). Returns the
-// payload length, or 0 if not present.
-uint16_t storage_read(int index, uint8_t *out, uint16_t out_cap);
+// Read the index-th stored entry (0..count-1). Sets *gen and *species, copies
+// the mon bytes into out (capped at out_cap), returns the byte length (0 if none).
+uint16_t storage_read_slot(int index, int *gen, int *species, uint8_t *out, uint16_t out_cap);
 
-// Delete the record at `index` (0..count-1). Returns false if not present.
+// Delete the index-th stored entry.
 bool storage_delete(int index);
 
-// Erase the whole vault.
+// Erase the whole dex.
 void storage_wipe(void);
 
 #endif // STORAGE_H

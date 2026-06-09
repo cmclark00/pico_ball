@@ -136,16 +136,16 @@ function monSummary(mon) {
   };
 }
 
-function downloadCaptureJson(mons, i) {
-  const data = { capture: i + 1, count: mons.length, pokemon: mons.map(monSummary) };
-  download(`capture_${i + 1}.json`,
+function downloadDexJson(mons, gen) {
+  const data = { gen, count: mons.length, pokemon: mons.map(monSummary) };
+  download(`dex_gen${gen}.json`,
            new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
 }
 
 // --- rendering ---------------------------------------------------------------
 function statCell(lbl, val) { return `<div><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`; }
 
-function card(mon) {
+function card(mon, index) {
   const slug = spriteSlug(mon.name);
   const url = `https://img.pokemondb.net/sprites/${mon.spriteSet}/normal/${slug}.png`;
   const hpPct = mon.maxHp ? Math.max(0, Math.min(100, Math.round(100 * mon.hp / mon.maxHp))) : 0;
@@ -178,8 +178,12 @@ function card(mon) {
     <div class="dv">DVs — Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · Spc ${mon.dv.spc} · HP ${mon.dv.hp}</div>
     <ul class="moves">${moves || "<li>No moves</li>"}</ul>
     <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}</div>
-    <div class="row"><button class="btn-sm dl-pk1">Download .pk1</button></div>`;
+    <div class="row">
+      <button class="btn-sm dl-pk1">Download .pk1</button>
+      <button class="btn-sm del-mon">Delete</button>
+    </div>`;
   el.querySelector(".dl-pk1").addEventListener("click", () => downloadPk1(mon));
+  el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
   return el;
 }
 
@@ -191,38 +195,34 @@ function headButton(label, fn) {
   return b;
 }
 
-// `records` is an array of raw Uint8Array records.
-function render(records) {
+// `entries` is an array of { gen, species, index, mon } dex entries (index is
+// the device storage slot order, used for delete).
+function render(entries) {
   const out = document.getElementById("out");
   out.innerHTML = "";
-  if (!records.length) {
-    out.innerHTML = `<p class="hint">No captures stored on the device yet. Capture
-      some at the Cable Club, then Refresh.</p>`;
+  if (!entries.length) {
+    out.innerHTML = `<p class="hint">The vault dex is empty. Capture some Pokémon at
+      the Cable Club (recapturing a species updates its dex entry), then Refresh.</p>`;
     return;
   }
-  records.forEach((raw, i) => {
-    const mons = decodeRecord(raw);
-    const gen = raw.length >= 1036 ? 2 : 1;
+  for (const gen of [1, 2]) {
+    const group = entries.filter(e => e.gen === gen);
+    if (!group.length) continue;
     const sec = document.createElement("div");
     sec.className = "records";
     const head = document.createElement("div");
     head.className = "cap-head";
-    head.innerHTML = `<h2 class="grow">Capture ${i + 1} — ${mons.length} Pokémon · Gen ${gen}</h2>`;
-    if (gen === 1) {
-      head.appendChild(headButton("Download .sav", () =>
-        download(`capture_${i + 1}.sav`,
-                 new Blob([buildSav(raw)], { type: "application/octet-stream" }))));
-    }
-    head.appendChild(headButton("Download JSON", () => downloadCaptureJson(mons, i)));
-    head.appendChild(headButton("Delete", () => deleteRecord(i)));
+    head.innerHTML = `<h2 class="grow">Gen ${gen} dex — ${group.length} Pokémon</h2>`;
+    head.appendChild(headButton("Download JSON", () =>
+      downloadDexJson(group.map(e => e.mon), gen)));
     sec.appendChild(head);
 
     const grid = document.createElement("div");
     grid.className = "grid";
-    mons.forEach(m => grid.appendChild(card(m)));
+    group.forEach(e => grid.appendChild(card(e.mon, e.index)));
     sec.appendChild(grid);
     out.appendChild(sec);
-  });
+  }
 }
 
 // --- Web Serial transport ----------------------------------------------------
@@ -290,17 +290,23 @@ async function withBusy(label, fn) {
   finally { busy = false; setControls(true); }
 }
 
-// Send 'd', collect records, render.
+// Send 'd', collect the dex (one MON line per stored Pokémon), render.
 async function dump() {
-  const records = [];
-  await sendCommand("d", l => l === "END", 12000, l => {
-    if (l.startsWith("REC ")) {
-      const hex = l.split(/\s+/)[3] || "";
-      if (hex.length >= REC_LEN * 2) records.push(hexToBytes(hex));
+  const entries = [];
+  await sendCommand("d", l => l === "END", 15000, l => {
+    if (l.startsWith("MON ")) {
+      const p = l.split(/\s+/);  // MON <gen> <species> <len> <hex>
+      const gen = parseInt(p[1], 10);
+      const species = parseInt(p[2], 10);
+      const hex = p[4] || "";
+      if (hex) {
+        entries.push({ gen, species, index: entries.length,
+                       mon: decodeMonRecord(hexToBytes(hex), gen) });
+      }
     }
   });
-  setStatus(`Connected · ${records.length} capture(s)`);
-  render(records);
+  setStatus(`Connected · ${entries.length} in dex`);
+  render(entries);
 }
 
 function captureNow() {

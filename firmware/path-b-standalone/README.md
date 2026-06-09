@@ -66,14 +66,14 @@ The firmware also exposes a USB serial console (for debug + retrieval):
 
 ```bash
 source host/.venv/bin/activate
-python host/import_standalone.py        # auto-detects the board, decodes to vault/
+python host/import_standalone.py        # auto-detects the board, decodes to vault/dex/
 ```
 
-Or talk to it manually in any serial terminal (115200): send `c` for the stored
-count, `d` to dump all records as hex. `import_standalone.py` parses that dump,
-applies the patch list, and decodes each party into `vault/standalone_<n>/`
-(same `.pk1` + `.json` format as Path A — so you can then `inject.py` them back
-into a cartridge).
+Or talk to it manually in any serial terminal (115200): send `c` for the dex
+count, `d` to dump the dex (one `MON <gen> <species> <len> <hex>` line per stored
+Pokémon, `struct + OT name + nickname`). `import_standalone.py` saves each as a
+`.pk1` + `.json` in `vault/dex/` (same format as Path A — so you can `inject.py`
+them back into a cartridge). The WebUI reads the same dump and shows the dex.
 
 ## Build from source
 
@@ -101,12 +101,14 @@ cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
 - **Fixed baked partner.** Our outgoing party is constant, so it's precomputed
   by the engine into `baked_party.h`; the FSM just replays it. Empty fillers and
   zero trailing drop-bytes (English RBY) make the buffered exchange exact.
-- **Storage: two banks, one per generation.** Bank 0 holds your latest Gen 1
-  party, bank 1 your latest Gen 2 party. **Re-capturing a generation overwrites
-  that bank** (e.g. capture Cyndaquil at Lv9, level up and recapture → the Gen 2
-  bank now holds the Lv15 party). Each bank is one 4 KB flash sector; no LittleFS.
-  (After flashing this build over an older one, send `w` / hit **Wipe all** once
-  to clear any old-format records.)
+- **Storage: a living dex, keyed by (generation, species).** On capture, the
+  party is split into individual Pokémon and each is **upserted by species** —
+  recapturing a species overwrites just that entry, new species are added. So the
+  vault accumulates toward a full Pokédex across many captures (e.g. capture
+  Cyndaquil at Lv9, level it up and recapture → the Cyndaquil entry updates to
+  Lv15; capturing a Totodile adds a new entry). One 128-byte slot per species per
+  gen, in a reserved flash region; no LittleFS. (After flashing over an older
+  build, send `w` / hit **Wipe all** once to clear old-format data.)
 
 ## Incremental bring-up (recommended before trusting a real trade)
 

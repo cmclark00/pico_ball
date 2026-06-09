@@ -26,8 +26,9 @@ static void dump_all(void) {
     int n = storage_count();
     printf("DUMP %d\n", n);
     for (int i = 0; i < n; i++) {
-        uint16_t len = storage_read(i, readbuf, sizeof(readbuf));
-        printf("REC %d %u ", i, len);
+        int gen = 0, species = 0;
+        uint16_t len = storage_read_slot(i, &gen, &species, readbuf, sizeof(readbuf));
+        printf("MON %d %d %u ", gen, species, len);
         for (uint16_t j = 0; j < len; j++) printf("%02X", readbuf[j]);
         printf("\n");
     }
@@ -98,11 +99,22 @@ static void do_capture(void) {
         sleep_ms(2000);
         return;
     }
-    if (storage_put(current_gen, record, p->record_len)) {
-        printf("CAPTURE_RESULT ok %d/%d\n", storage_count(), storage_capacity());
+
+    // Split the captured party and upsert each Pokémon into the dex by species.
+    static uint8_t mondata[6][DEX_MON_MAX];
+    uint8_t species[6];
+    uint16_t lens[6];
+    int n = extract_mons(p, record, species, mondata, lens);
+    int stored = 0;
+    for (int i = 0; i < n; i++)
+        if (storage_put_mon(current_gen, species[i], mondata[i], lens[i])) stored++;
+
+    if (n > 0) {
+        printf("CAPTURE_RESULT ok stored %d dex %d/%d\n",
+               stored, storage_count(), storage_capacity());
         ui_ok();
     } else {
-        printf("CAPTURE_RESULT err\n");
+        printf("CAPTURE_RESULT badparse\n");
         ui_error();
     }
     sleep_ms(2500);

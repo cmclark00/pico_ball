@@ -57,24 +57,22 @@ def _read_dump(port):
             line = ser.readline().decode(errors="replace").strip()
             if not line:
                 continue
-            if line.startswith("REC "):
-                _, idx, length, hexdata = line.split(" ", 3)
-                records.append(bytes.fromhex(hexdata))
+            if line.startswith("MON "):
+                # MON <gen> <species> <len> <hex>
+                parts = line.split(" ", 4)
+                gen, species = int(parts[1]), int(parts[2])
+                records.append((gen, species, bytes.fromhex(parts[4])))
             elif line == "END":
                 break
         return records
 
 
-def _decode_and_save(trader, record, vault_dir):
-    from utilities.rby_trading_data_utils import RBYUtils
-
-    if len(record) < 625:
-        raise RuntimeError(f"record too short: {len(record)} bytes")
-    section1 = list(record[10:428])   # party
-    section2 = list(record[428:625])  # patch list
-    RBYUtils.apply_patches(section1, section2, RBYUtils)
-    party = trader.party_reader(section1)
-    return savedata.save_party(party, vault_dir, engine.ENGINE_DIR)
+def _save_mon(traders, gen, rec, vault_dir):
+    """rec = a single dex entry's bytes (struct + OT + nickname). Build a 1-mon
+    party for its generation and save it (.pk1 + .json)."""
+    party = engine.build_inject_party(traders[gen], list(rec))
+    return savedata.save_party_member(
+        party, 0, vault_dir, engine.ENGINE_DIR, prefix="dex", gen=gen)
 
 
 def main():
@@ -94,20 +92,20 @@ def main():
         print(f"Reading from {port}...")
         records = _read_dump(port)
         if not records:
-            print("No records returned. Has the board captured anything yet?")
+            print("No dex entries returned. Has the board captured anything yet?")
             return 1
 
+        out_dir = os.path.join(os.path.abspath(args.out), "dex")
         with engine.engine_cwd():
-            trader = engine.build_trader(_FakeLink(), verbose=False, sanity=True)
-            engine.prime_capture_session(trader)
-            total = 0
-            for i, rec in enumerate(records):
-                sub = os.path.join(os.path.abspath(args.out), f"standalone_{i}")
-                written = _decode_and_save(trader, rec, sub)
-                total += len(written)
-                names = ", ".join(info["species_name"] for _, info in written)
-                print(f"  record {i}: {len(written)} Pokémon ({names}) -> {sub}")
-        print(f"\nDecoded {len(records)} record(s), {total} Pokémon into {args.out}.")
+            traders = {}
+            for g in (1, 2):
+                t = engine.build_trader(_FakeLink(), verbose=False, sanity=True, gen=g)
+                engine.prime_capture_session(t)
+                traders[g] = t
+            for gen, species, rec in records:
+                path = _save_mon(traders, gen, rec, out_dir)
+                print(f"  Gen {gen} #{species:<3} -> {os.path.basename(path)}")
+        print(f"\nSaved {len(records)} dex Pokémon into {out_dir}.")
         return 0
     except RuntimeError as exc:
         print(f"\nError: {exc}", file=sys.stderr)

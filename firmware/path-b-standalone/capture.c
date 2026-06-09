@@ -1,5 +1,6 @@
 #include "capture.h"
 #include "gb_link.h"
+#include <string.h>
 
 #define NO_INPUT 0xFE
 
@@ -102,4 +103,38 @@ gb_capture_result_t capture_run(const gen_profile_t *p, uint8_t *out) {
         off += len;
     }
     return GB_CAP_OK;
+}
+
+// Restore the real 0xFE bytes the trade protocol patched out of the party data.
+// Same patch scheme for RBY and GSC party sections (base 0x13, start 7, 2 sets).
+static void apply_patches(uint8_t *data, int data_len, const uint8_t *patch, int patch_len) {
+    int num = 2, base = 0x13, start = 7, i = 0;
+    while (num > 0 && start + i < patch_len) {
+        uint8_t read_pos = patch[start + i];
+        i++;
+        if (read_pos == 0xFF) { num--; base += 0xFC; }
+        else if (read_pos > 0 && read_pos + base < data_len) data[read_pos + base - 1] = 0xFE;
+    }
+}
+
+int extract_mons(const gen_profile_t *p, uint8_t *raw,
+                 uint8_t species[6], uint8_t data[6][DEX_MON_MAX], uint16_t lens[6]) {
+    uint8_t *sec1 = raw + p->lens[0];               // party section
+    uint8_t *sec2 = sec1 + p->lens[1];              // patch list
+    apply_patches(sec1, p->lens[1], sec2, p->lens[2]);
+
+    int count = sec1[p->count_pos];
+    if (count < 1 || count > 6) return 0;
+    uint16_t rec_len = p->mon_len + 2 * p->name_len;
+    for (int i = 0; i < count; i++) {
+        uint8_t *st = sec1 + p->mon_pos + i * p->mon_len;
+        uint8_t *ot = sec1 + p->ot_pos + i * p->name_len;
+        uint8_t *nk = sec1 + p->nick_pos + i * p->name_len;
+        species[i] = st[0];
+        memcpy(data[i], st, p->mon_len);
+        memcpy(data[i] + p->mon_len, ot, p->name_len);
+        memcpy(data[i] + p->mon_len + p->name_len, nk, p->name_len);
+        lens[i] = rec_len;
+    }
+    return count;
 }

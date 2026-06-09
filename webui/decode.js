@@ -55,11 +55,50 @@ function gbText(bytes) {
   return s;
 }
 
-function decodeRecord(bytes) {
-  const L = layoutFor(bytes.length);
+// Decode one Pokémon from its struct (m) + OT-name + nickname byte arrays,
+// using the given generation layout L.
+function decodeMon(m, otB, nickB, L) {
   const names = globalThis[L.namesKey] || [];
   const moveNames = globalThis.MOVE_NAMES || [];
-  const typeNames = globalThis.TYPE_NAMES || [];
+  const species = m[0];
+  const name = names[species] || ("#" + species);
+  const nickname = gbText(nickB);
+
+  const moves = [0, 1, 2, 3].map(k => m[L.moves + k]);
+  const pps = [0, 1, 2, 3].map(k => m[L.pp + k] & 0x3F);
+
+  const d1 = m[L.dv], d2 = m[L.dv + 1];
+  const dv = { atk: d1 >> 4, def: d1 & 0xF, spd: d2 >> 4, spc: d2 & 0xF };
+  dv.hp = ((dv.atk & 1) << 3) | ((dv.def & 1) << 2) | ((dv.spd & 1) << 1) | (dv.spc & 1);
+
+  const types = ((globalThis[L.typesKey] || [])[species] || []).slice();
+
+  const raw = new Uint8Array(L.monLen + 2 * L.nameLen);
+  raw.set(m.subarray(0, L.monLen), 0);
+  raw.set(otB.subarray(0, L.nameLen), L.monLen);
+  raw.set(nickB.subarray(0, L.nameLen), L.monLen + L.nameLen);
+
+  return {
+    gen: L.gen, spriteSet: L.spriteSet, species, name, nickname,
+    otName: gbText(otB),
+    otId: u16(m, L.otId),
+    level: m[L.level],
+    hp: u16(m, L.curHp),
+    maxHp: u16(m, L.maxHp),
+    types,
+    stats: L.stats.map(([label, off]) => ({ label, val: u16(m, off) })),
+    dv,
+    nicknamed: nickname.toUpperCase() !== name.toUpperCase(),
+    tradeEvolves: TRADE_EVOLVERS.has(name),
+    moves: moves.map((mv, k) => ({ id: mv, name: moveNames[mv] || ("#" + mv), pp: pps[k] }))
+                .filter(x => x.id !== 0),
+    raw,
+  };
+}
+
+// Decode a whole captured party block (625 = Gen 1, 1036 = Gen 2).
+function decodeRecord(bytes) {
+  const L = layoutFor(bytes.length);
   const sec1 = bytes.slice(L.sec1[0], L.sec1[0] + L.sec1[1]);
   const sec2 = bytes.slice(L.sec2[0], L.sec2[0] + L.sec2[1]);
   applyPatches(sec1, sec2);
@@ -68,45 +107,22 @@ function decodeRecord(bytes) {
   if (count < 1 || count > 6) count = 0;
   const mons = [];
   for (let i = 0; i < count; i++) {
-    const m = sec1.subarray(L.monPos + i * L.monLen, L.monPos + (i + 1) * L.monLen);
-    const otB = sec1.subarray(L.otPos + i * L.nameLen, L.otPos + (i + 1) * L.nameLen);
-    const nickB = sec1.subarray(L.nickPos + i * L.nameLen, L.nickPos + (i + 1) * L.nameLen);
-    const species = m[0];
-    const name = names[species] || ("#" + species);
-    const nickname = gbText(nickB);
-
-    const moves = [0, 1, 2, 3].map(k => m[L.moves + k]);
-    const pps = [0, 1, 2, 3].map(k => m[L.pp + k] & 0x3F);
-
-    const d1 = m[L.dv], d2 = m[L.dv + 1];
-    const dv = { atk: d1 >> 4, def: d1 & 0xF, spd: d2 >> 4, spc: d2 & 0xF };
-    dv.hp = ((dv.atk & 1) << 3) | ((dv.def & 1) << 2) | ((dv.spd & 1) << 1) | (dv.spc & 1);
-
-    const types = ((globalThis[L.typesKey] || [])[species] || []).slice();
-
-    const raw = new Uint8Array(L.monLen + 2 * L.nameLen);
-    raw.set(m, 0);
-    raw.set(otB, L.monLen);
-    raw.set(nickB, L.monLen + L.nameLen);
-
-    mons.push({
-      gen: L.gen, spriteSet: L.spriteSet, species, name, nickname,
-      otName: gbText(otB),
-      otId: u16(m, L.otId),
-      level: m[L.level],
-      hp: u16(m, L.curHp),
-      maxHp: u16(m, L.maxHp),
-      types,
-      stats: L.stats.map(([label, off]) => ({ label, val: u16(m, off) })),
-      dv,
-      nicknamed: nickname.toUpperCase() !== name.toUpperCase(),
-      tradeEvolves: TRADE_EVOLVERS.has(name),
-      moves: moves.map((mv, k) => ({ id: mv, name: moveNames[mv] || ("#" + mv), pp: pps[k] }))
-                  .filter(x => x.id !== 0),
-      raw,
-    });
+    mons.push(decodeMon(
+      sec1.subarray(L.monPos + i * L.monLen, L.monPos + (i + 1) * L.monLen),
+      sec1.subarray(L.otPos + i * L.nameLen, L.otPos + (i + 1) * L.nameLen),
+      sec1.subarray(L.nickPos + i * L.nameLen, L.nickPos + (i + 1) * L.nameLen),
+      L));
   }
   return mons;
+}
+
+// Decode a single dex entry: struct + OT name + nickname, for the given gen.
+function decodeMonRecord(bytes, gen) {
+  const L = gen === 2 ? GEN2 : GEN1;
+  const m = bytes.subarray(0, L.monLen);
+  const otB = bytes.subarray(L.monLen, L.monLen + L.nameLen);
+  const nickB = bytes.subarray(L.monLen + L.nameLen, L.monLen + 2 * L.nameLen);
+  return decodeMon(m, otB, nickB, L);
 }
 
 // Sprite slug for Pokémon DB Red/Blue sprites.
@@ -143,6 +159,6 @@ function buildSav(record) {
   return sav;
 }
 
-const _exports = { decodeRecord, spriteSlug, hexToBytes, gbText, applyPatches, buildSav, layoutFor, REC_LEN };
+const _exports = { decodeRecord, decodeMonRecord, decodeMon, spriteSlug, hexToBytes, gbText, applyPatches, buildSav, layoutFor, REC_LEN };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, _exports);
 if (typeof module !== "undefined") module.exports = _exports;
