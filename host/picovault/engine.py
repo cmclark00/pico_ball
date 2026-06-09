@@ -134,28 +134,32 @@ def load_base_partner(trader):
 
 # --- inject (vault -> cartridge) ---------------------------------------------
 
-_RECORD_LEN = 0x2C + 2 * 0x0B  # 44 struct + 11 OT + 11 nickname = 66
+# Minimum vault-record length per gen: struct + OT name + nickname.
+_MIN_RECORD_LEN = {1: 0x2C + 2 * 0x0B, 2: 0x30 + 2 * 0x0B}  # 66 (RBY), 70 (GSC)
 
 
 def build_inject_party(trader, record_bytes):
-    """Build a 1-Pokémon party (RBYTradingData) from a vaulted 66-byte record.
+    """Build a 1-Pokémon party from a vaulted record, for Gen 1 or Gen 2.
 
     We build it at the object level (not by splicing raw bytes) so that
-    create_trading_data writes everything at RBY's own block offsets, which
-    differ from Gen 2's. We start from base.bin's valid 1-mon party and replace
-    the single Pokémon + its species in the party list.
+    create_trading_data writes everything at that generation's own block offsets.
+    Start from base.bin's valid 1-mon party and replace the single Pokémon.
     """
-    from utilities.rby_trading_data_utils import RBYTradingPokémonInfo
+    gen = getattr(trader, "_pico_gen", 1)
+    if gen == 2:
+        from utilities.gsc_trading_data_utils import GSCTradingPokémonInfo as MonClass
+    else:
+        from utilities.rby_trading_data_utils import RBYTradingPokémonInfo as MonClass
 
     rec = list(record_bytes)
-    if len(rec) < _RECORD_LEN:
+    if len(rec) < _MIN_RECORD_LEN[gen]:
         raise RuntimeError(
-            f"Vault record is {len(rec)} bytes; expected {_RECORD_LEN} "
-            "(44 struct + 11 OT + 11 nickname). Was it made by this tool?"
+            f"Vault record is {len(rec)} bytes; expected >= {_MIN_RECORD_LEN[gen]} "
+            f"for Gen {gen}. Was it made by this tool (matching --gen)?"
         )
 
-    party = load_base_partner(trader)            # valid RBYTradingData, 1 mon
-    mon = RBYTradingPokémonInfo.set_data(rec)    # rebuild our mon (RBY layout)
+    party = load_base_partner(trader)            # valid 1-mon party for this gen
+    mon = MonClass.set_data(rec)                 # rebuild our mon (gen's layout)
     party.pokemon[0] = mon
     party.party_info.total = 1
     party.party_info.actual_mons[0] = mon.get_species()

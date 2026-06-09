@@ -9,6 +9,7 @@ whichever Pokémon you select on the Game Boy. That given-up Pokémon is NOT los
 Usage:
     python host/inject.py                      # list vault, pick interactively
     python host/inject.py vault/party02_Squirtle.pk1
+    python host/inject.py --gen 2 ...          # Gold/Silver/Crystal
     python host/inject.py --out vault          # where to save the given-up mon
 
 Flow in-game: Pokémon Center -> upstairs -> Cable Club -> TRADE CENTER -> table,
@@ -46,16 +47,16 @@ def _pick_record(path_arg, vault_dir):
     return pk1s[int(sel)]
 
 
-def inject(record_path, vault_dir, verbose, sanity):
+def inject(record_path, vault_dir, verbose, sanity, gen):
     with open(record_path, "rb") as fh:
         record = fh.read()
 
-    print(f"Injecting {os.path.basename(record_path)}...")
+    print(f"Injecting {os.path.basename(record_path)} (Gen {gen})...")
     link = UsbLink()
     link.open()
     try:
         with engine.engine_cwd():
-            trader = engine.build_trader(link, verbose=verbose, sanity=sanity)
+            trader = engine.build_trader(link, verbose=verbose, sanity=sanity, gen=gen)
             engine.prime_capture_session(trader)
             party = engine.build_inject_party(trader, record)
             send_data = party.create_trading_data(trader.special_sections_len)
@@ -83,7 +84,8 @@ def inject(record_path, vault_dir, verbose, sanity):
         print("\nTrade committed! The cartridge now has your vaulted Pokémon.")
         if given_idx is not None and 0 <= given_idx < cart_party.get_party_size():
             saved = savedata.save_party_member(
-                cart_party, given_idx, vault_dir, engine.ENGINE_DIR, prefix="received"
+                cart_party, given_idx, vault_dir, engine.ENGINE_DIR,
+                prefix="received", gen=gen
             )
             print(f"Saved the Pokémon the cartridge gave up -> {saved}")
         return 0
@@ -101,12 +103,14 @@ def main():
     ap.add_argument("--no-sanity", dest="sanity", action="store_false",
                     help="skip the engine's sanity cleaning of the injected mon")
     ap.add_argument("-q", "--quiet", dest="verbose", action="store_false")
+    ap.add_argument("--gen", type=int, choices=(1, 2), default=1,
+                    help="game generation: 1 = R/B/Y, 2 = G/S/C")
     args = ap.parse_args()
 
     try:
         vault_dir = os.path.abspath(args.out)
         record = _pick_record(args.record, vault_dir)
-        return inject(record, vault_dir, args.verbose, args.sanity)
+        return inject(record, vault_dir, args.verbose, args.sanity, args.gen)
     except RuntimeError as exc:
         print(f"\nError: {exc}", file=sys.stderr)
         return 2

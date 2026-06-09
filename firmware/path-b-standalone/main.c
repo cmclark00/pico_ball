@@ -98,12 +98,12 @@ static void do_capture(void) {
         sleep_ms(2000);
         return;
     }
-    if (storage_append(record, p->record_len)) {
+    if (storage_put(current_gen, record, p->record_len)) {
         printf("CAPTURE_RESULT ok %d/%d\n", storage_count(), storage_capacity());
         ui_ok();
     } else {
-        printf("CAPTURE_RESULT full %d\n", storage_capacity());
-        ui_full();
+        printf("CAPTURE_RESULT err\n");
+        ui_error();
     }
     sleep_ms(2500);
 }

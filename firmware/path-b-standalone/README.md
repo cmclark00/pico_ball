@@ -101,8 +101,12 @@ cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
 - **Fixed baked partner.** Our outgoing party is constant, so it's precomputed
   by the engine into `baked_party.h`; the FSM just replays it. Empty fillers and
   zero trailing drop-bytes (English RBY) make the buffered exchange exact.
-- **Storage:** one record per 4 KB flash sector in a reserved 128 KB region
-  (32 captures), instead of LittleFS — simpler and dependency-free.
+- **Storage: two banks, one per generation.** Bank 0 holds your latest Gen 1
+  party, bank 1 your latest Gen 2 party. **Re-capturing a generation overwrites
+  that bank** (e.g. capture Cyndaquil at Lv9, level up and recapture → the Gen 2
+  bank now holds the Lv15 party). Each bank is one 4 KB flash sector; no LittleFS.
+  (After flashing this build over an older one, send `w` / hit **Wipe all** once
+  to clear any old-format records.)
 
 ## Incremental bring-up (recommended before trusting a real trade)
 
