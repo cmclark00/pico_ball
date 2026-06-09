@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>pico_ball — Pokémon Vault</title>
+<style>
+  :root {
+    --bg: #0f380f; --panel: #306230; --panel2: #8bac0f; --ink: #9bbc0f;
+    --ink-dark: #0f380f; --accent: #e0f8d0; --shadow: #071807;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Segoe UI", system-ui, sans-serif; min-height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 18px 24px; background: var(--ink-dark);
+    border-bottom: 4px solid var(--panel);
+  }
+  h1 { font-size: 20px; margin: 0; color: var(--accent); letter-spacing: 1px; }
+  h1 small { display: block; font-size: 12px; color: var(--panel2); font-weight: normal; }
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; color: var(--ink-dark);
+    background: var(--panel2); border: 2px solid var(--accent);
+    border-radius: 8px; padding: 8px 16px; box-shadow: 0 3px 0 var(--shadow);
+  }
+  button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--shadow); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #status { margin-left: auto; font-size: 13px; color: var(--accent); }
+  #unsupported { display:none; background:#5a1a1a; color:#fdd; padding:12px 24px; }
+  main { padding: 24px; }
+  .hint { color: var(--panel2); font-size: 13px; margin: 0 0 18px; max-width: 720px; }
+  .records > h2 { color: var(--accent); font-size: 15px; border-bottom: 2px solid var(--panel);
+    padding-bottom: 6px; margin: 28px 0 14px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .card {
+    background: var(--panel); border: 3px solid var(--ink-dark); border-radius: 12px;
+    padding: 14px; box-shadow: 0 4px 0 var(--shadow); color: var(--accent);
+  }
+  .card .top { display: flex; gap: 12px; align-items: center; }
+  .sprite {
+    width: 72px; height: 72px; image-rendering: pixelated; flex: 0 0 72px;
+    background: var(--ink-dark); border-radius: 8px; display: flex;
+    align-items: center; justify-content: center; font-size: 28px; color: var(--panel2);
+  }
+  .sprite img { width: 100%; height: 100%; image-rendering: pixelated; }
+  .name { font-size: 18px; font-weight: 700; }
+  .nick { font-size: 12px; color: var(--panel2); }
+  .badge { display:inline-block; background: var(--ink-dark); color: var(--accent);
+    border-radius: 6px; padding: 2px 8px; font-size: 12px; margin-top: 4px; }
+  .hpbar { height: 8px; background: var(--ink-dark); border-radius: 4px; margin: 10px 0 4px; overflow: hidden; }
+  .hpbar > div { height: 100%; background: var(--ink); }
+  .moves { list-style: none; padding: 0; margin: 10px 0 0; }
+  .moves li { display: flex; justify-content: space-between; font-size: 13px;
+    border-top: 1px solid var(--ink-dark); padding: 4px 2px; }
+  .moves li .pp { color: var(--panel2); }
+  .meta { font-size: 11px; color: var(--panel2); margin-top: 8px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .chip { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    background: var(--ink); color: var(--ink-dark); border-radius: 10px;
+    padding: 2px 8px; font-weight: 700; }
+  .chip.flag { background: var(--panel2); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(38px, 1fr));
+    gap: 4px; margin-top: 10px; text-align: center; }
+  .stats div { background: var(--ink-dark); border-radius: 6px; padding: 4px 2px; }
+  .stats .lbl { font-size: 9px; color: var(--panel2); }
+  .stats .val { font-size: 14px; font-weight: 700; }
+  .dv { font-size: 10px; color: var(--panel2); margin-top: 6px; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-sm { font-size: 11px; padding: 5px 10px; box-shadow: 0 2px 0 var(--shadow);
+    border-radius: 6px; }
+  .cap-head { display: flex; align-items: center; gap: 12px; }
+  .cap-head .grow { flex: 1; }
+  footer { color: var(--panel); font-size: 11px; padding: 20px 24px; }
+  a { color: var(--panel2); }
+</style>
+</head>
+<body>
+<header>
+  <h1>pico_ball <small>Pokémon Vault — read directly from the device</small></h1>
+  <button id="connect">Connect device</button>
+  <select id="gen" title="Generation for capture">
+    <option value="1">Gen 1 (R/B/Y)</option>
+    <option value="2">Gen 2 (G/S/C)</option>
+  </select>
+  <button id="capture" disabled>Capture now</button>
+  <button id="refresh" disabled>Refresh</button>
+  <button id="wipe" disabled>Wipe all</button>
+  <span id="status">Not connected</span>
+</header>
+<div id="unsupported">
+  This browser doesn't support the Web Serial API. Use Chrome or Edge (desktop),
+  served from <code>http://localhost</code>.
+</div>
+<main>
+  <p class="hint">
+    Plug the standalone vault board into USB and click <b>Connect device</b>, then
+    pick the serial port. The page asks the board for its stored captures and
+    decodes the Gen 1 Pokémon right here — nothing is copied to disk.
+  </p>
+  <div id="out"></div>
+</main>
+<footer>pico_ball · Web Serial → on-device flash · sprites: Pokémon DB (Red/Blue), offline-safe fallback</footer>
+
+<script src="pokedata.js"></script>
+<script src="decode.js"></script>
+<script>
+"use strict";
+
+// --- downloads ---------------------------------------------------------------
+function esc(s) { return String(s).replace(/[^A-Za-z0-9._-]/g, "_") || "mon"; }
+
+function download(filename, blob) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function downloadPk1(mon) {
+  download(`${esc(mon.nickname || mon.name)}_${esc(mon.name)}.pk1`,
+           new Blob([mon.raw], { type: "application/octet-stream" }));
+}
+
+function monSummary(mon) {
+  return {
+    species: mon.name, nickname: mon.nickname, level: mon.level,
+    types: mon.types, hp: `${mon.hp}/${mon.maxHp}`, stats: mon.stats,
+    dvs: mon.dv, ot: mon.otName, otId: mon.otId, nicknamed: mon.nicknamed,
+    tradeEvolves: mon.tradeEvolves,
+    moves: mon.moves.map(m => ({ name: m.name, pp: m.pp })),
+    pk1_hex: Array.from(mon.raw).map(b => b.toString(16).padStart(2, "0")).join(""),
+  };
+}
+
+function downloadCaptureJson(mons, i) {
+  const data = { capture: i + 1, count: mons.length, pokemon: mons.map(monSummary) };
+  download(`capture_${i + 1}.json`,
+           new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+}
+
+// --- rendering ---------------------------------------------------------------
+function statCell(lbl, val) { return `<div><div class="lbl">${lbl}</div><div class="val">${val}</div></div>`; }
+
+function card(mon) {
+  const slug = spriteSlug(mon.name);
+  const url = `https://img.pokemondb.net/sprites/red-blue/normal/${slug}.png`;
+  const hpPct = mon.maxHp ? Math.max(0, Math.min(100, Math.round(100 * mon.hp / mon.maxHp))) : 0;
+  const moves = mon.moves.map(m =>
+    `<li><span>${m.name}</span><span class="pp">${m.pp} PP</span></li>`).join("");
+  const typeChips = mon.types.map(t => `<span class="chip">${t}</span>`).join("");
+  const flags = [
+    mon.gen === 2 ? '<span class="chip">GSC</span>' : "",
+    mon.nicknamed ? '<span class="chip flag">nicknamed</span>' : "",
+    mon.tradeEvolves ? '<span class="chip flag">trade-evolves</span>' : "",
+  ].join("");
+  const statsHtml = mon.stats.map(st => statCell(st.label, st.val)).join("");
+
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML = `
+    <div class="top">
+      <div class="sprite"><img alt="${mon.name}" src="${url}"
+        onerror="this.replaceWith(document.createTextNode('?'))"></div>
+      <div>
+        <div class="name">${mon.name}</div>
+        <div class="nick">“${mon.nickname || mon.name}”</div>
+        <span class="badge">Lv ${mon.level}</span>
+      </div>
+    </div>
+    <div class="chips">${typeChips}${flags}</div>
+    <div class="hpbar"><div style="width:${hpPct}%"></div></div>
+    <div class="meta">HP ${mon.hp}/${mon.maxHp}</div>
+    <div class="stats">${statsHtml}</div>
+    <div class="dv">DVs — Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · Spc ${mon.dv.spc} · HP ${mon.dv.hp}</div>
+    <ul class="moves">${moves || "<li>No moves</li>"}</ul>
+    <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}</div>
+    <div class="row"><button class="btn-sm dl-pk1">Download .pk1</button></div>`;
+  el.querySelector(".dl-pk1").addEventListener("click", () => downloadPk1(mon));
+  return el;
+}
+
+function headButton(label, fn) {
+  const b = document.createElement("button");
+  b.className = "btn-sm";
+  b.textContent = label;
+  b.addEventListener("click", fn);
+  return b;
+}
+
+// `records` is an array of raw Uint8Array records.
+function render(records) {
+  const out = document.getElementById("out");
+  out.innerHTML = "";
+  if (!records.length) {
+    out.innerHTML = `<p class="hint">No captures stored on the device yet. Capture
+      some at the Cable Club, then Refresh.</p>`;
+    return;
+  }
+  records.forEach((raw, i) => {
+    const mons = decodeRecord(raw);
+    const gen = raw.length >= 1036 ? 2 : 1;
+    const sec = document.createElement("div");
+    sec.className = "records";
+    const head = document.createElement("div");
+    head.className = "cap-head";
+    head.innerHTML = `<h2 class="grow">Capture ${i + 1} — ${mons.length} Pokémon · Gen ${gen}</h2>`;
+    if (gen === 1) {
+      head.appendChild(headButton("Download .sav", () =>
+        download(`capture_${i + 1}.sav`,
+                 new Blob([buildSav(raw)], { type: "application/octet-stream" }))));
+    }
+    head.appendChild(headButton("Download JSON", () => downloadCaptureJson(mons, i)));
+    head.appendChild(headButton("Delete", () => deleteRecord(i)));
+    sec.appendChild(head);
+
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    mons.forEach(m => grid.appendChild(card(m)));
+    sec.appendChild(grid);
+    out.appendChild(sec);
+  });
+}
+
+// --- Web Serial transport ----------------------------------------------------
+let port = null;
+const statusEl = document.getElementById("status");
+function setStatus(t) { statusEl.textContent = t; }
+
+if (!("serial" in navigator)) {
+  document.getElementById("unsupported").style.display = "block";
+  document.getElementById("connect").disabled = true;
+}
+
+let busy = false;
+const ctrlIds = ["refresh", "capture", "wipe"];
+function setControls(connected) {
+  ctrlIds.forEach(id => { const b = document.getElementById(id); if (b) b.disabled = !connected || busy; });
+  document.getElementById("connect").disabled = busy;
+}
+
+async function connect() {
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  // pico_stdio_usb only sends once DTR is asserted; Web Serial doesn't by default.
+  try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
+  await new Promise(r => setTimeout(r, 200));  // let the CDC settle
+  setStatus("Connected");
+  setControls(true);
+  await dump();
+}
+
+// Write a command and read text lines until doneFn(line) or timeout.
+// onLine(line) is called for every line. Returns when done.
+async function sendCommand(payload, doneFn, timeoutMs, onLine) {
+  const writer = port.writable.getWriter();
+  await writer.write(new TextEncoder().encode(payload));
+  writer.releaseLock();
+
+  const reader = port.readable.getReader();
+  const decoder = new TextDecoder();
+  let buf = "", done = false;
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (!done && Date.now() < deadline) {
+      const { value, done: rdDone } = await reader.read();
+      if (rdDone) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (onLine) onLine(line);
+        if (doneFn(line)) { done = true; break; }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function withBusy(label, fn) {
+  if (busy) return;
+  busy = true; setControls(true); setStatus(label);
+  try { await fn(); }
+  catch (e) { setStatus("Error: " + e.message); }
+  finally { busy = false; setControls(true); }
+}
+
+// Send 'd', collect records, render.
+async function dump() {
+  const records = [];
+  await sendCommand("d", l => l === "END", 12000, l => {
+    if (l.startsWith("REC ")) {
+      const hex = l.split(/\s+/)[3] || "";
+      if (hex.length >= REC_LEN * 2) records.push(hexToBytes(hex));
+    }
+  });
+  setStatus(`Connected · ${records.length} capture(s)`);
+  render(records);
+}
+
+function captureNow() {
+  const gen = document.getElementById("gen").value;  // "1" or "2"
+  return withBusy(`Capturing (Gen ${gen})… sit at the Trade Center table and pick a Pokémon`, async () => {
+    await sendCommand(gen, l => l.startsWith("GEN"), 3000);  // select generation
+    let result = "";
+    await sendCommand("a", l => l.startsWith("CAPTURE_RESULT"), 120000,
+                      l => { if (l.startsWith("CAPTURE_RESULT")) result = l; });
+    setStatus(result.includes(" ok ") ? "Captured!" : "Capture: " + result);
+    await dump();
+  });
+}
+
+function deleteRecord(i) {
+  return withBusy("Deleting…", async () => {
+    await sendCommand("r" + i + "\n", l => l.startsWith("DELETED"), 5000);
+    await dump();
+  });
+}
+
+function wipeAll() {
+  if (!confirm("Erase ALL captures stored on the device? This cannot be undone.")) return;
+  return withBusy("Wiping…", async () => {
+    await sendCommand("w", l => l.startsWith("WIPED"), 8000);
+    await dump();
+  });
+}
+
+document.getElementById("connect").addEventListener("click", () =>
+  connect().catch(e => setStatus("Error: " + e.message)));
+document.getElementById("refresh").addEventListener("click", () =>
+  withBusy("Reading…", dump));
+document.getElementById("capture").addEventListener("click", captureNow);
+document.getElementById("wipe").addEventListener("click", wipeAll);
+</script>
+</body>
+</html>

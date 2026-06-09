@@ -1,0 +1,20 @@
+# Python
+host/.venv/
+__pycache__/
+*.pyc
+
+# Vendored trade engine (fetched by scripts/setup.sh, pinned)
+third_party/
+
+# Captured Pokémon are personal data; keep the folder, ignore contents
+vault/*
+!vault/.gitkeep
+
+# Firmware build artifacts
+firmware/**/build/
+*.uf2
+# keep the ready-to-flash binaries (inline comments are NOT allowed in gitignore)
+!firmware/prebuilt/*.uf2
+
+# Vendored bridge firmware (cloned + patched; reproducible per firmware/README.md)
+firmware/path-a-build/

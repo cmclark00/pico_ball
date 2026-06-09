@@ -1,0 +1,34 @@
+cmake_minimum_required(VERSION 3.13)
+include(pico_sdk_import.cmake)
+project(pico_ball_vault C CXX ASM)
+pico_sdk_init()
+
+add_executable(pico_ball_vault)
+
+pico_generate_pio_header(pico_ball_vault ${CMAKE_CURRENT_LIST_DIR}/spi.pio)
+pico_generate_pio_header(pico_ball_vault ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+
+target_include_directories(pico_ball_vault PRIVATE ${CMAKE_CURRENT_LIST_DIR})
+
+target_sources(pico_ball_vault PRIVATE
+        main.c
+        gb_link.c
+        capture.c
+        gen_profile.c
+        storage.c
+        ui.c
+        pio_spi.c
+        )
+
+target_link_libraries(pico_ball_vault PRIVATE
+        pico_stdlib
+        hardware_pio
+        hardware_flash
+        hardware_sync
+        )
+
+# USB serial for debug + record retrieval; no UART.
+pico_enable_stdio_usb(pico_ball_vault 1)
+pico_enable_stdio_uart(pico_ball_vault 0)
+
+pico_add_extra_outputs(pico_ball_vault)

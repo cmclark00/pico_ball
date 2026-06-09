@@ -1,0 +1,3 @@
+# Path A host dependencies
+pyusb>=1.2.1        # talk to the board's WebUSB/vendor interface
+pyserial>=3.5       # fallback transport + port enumeration used by the engine
