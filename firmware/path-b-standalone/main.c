@@ -7,7 +7,7 @@
 //   'c'      -> print stored count
 //   'd'      -> dump all stored records as hex (import_standalone.py / WebUI read)
 //   'a'      -> arm/run a capture now (same as pressing the button)
-//   'i' <n>  -> inject slot n (default 0) back into a cartridge
+//   'i' <n>  -> inject slot n (omit n to inject most recently captured) back into a cartridge
 //   '1'/'2'  -> select generation (1 = R/B/Y, 2 = G/S/C) for the next operation
 //   'r' <n>  -> delete record n (digits terminated by newline)
 //   'w'      -> wipe the whole vault
@@ -15,12 +15,13 @@
 // Button gestures:
 //   Tap        -> capture (current gen)
 //   Hold ~0.7s -> switch gen (Gen 1 <-> Gen 2)
-//   Hold ~2s   -> inject slot 0 of current gen (LED turns amber briefly to confirm)
+//   Hold ~2s   -> inject most recently captured mon (cross-gen auto-converted if needed)
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "gb_link.h"
 #include "capture.h"
 #include "inject.h"
+#include "cross_gen.h"
 #include "gen_profile.h"
 #include "storage.h"
 #include "ui.h"
@@ -28,7 +29,7 @@
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
-static int inject_slot = 0;  // which dex slot to inject (by index into stored list)
+static int inject_slot = -1; // which dex slot to inject (-1 = most recently captured)
 
 static void dump_all(void) {
     int n = storage_count();
@@ -136,48 +137,54 @@ static void do_capture(void) {
 }
 
 static void do_inject(int slot) {
-    const gen_profile_t *p = gen_profile(current_gen);
+    // -1 means "most recently captured"
+    if (slot < 0) {
+        slot = storage_last_written_index();
+        if (slot < 0) {
+            printf("INJECT_RESULT fail: vault empty\n");
+            ui_error(); sleep_ms(2000); return;
+        }
+    }
 
     int mon_gen = 0, species = 0;
     uint16_t len = storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
 
     if (len == 0) {
-        printf("INJECT slot %d: empty\n", slot);
-        ui_error();
-        sleep_ms(2000);
-        return;
-    }
-    if (mon_gen != current_gen) {
-        printf("INJECT slot %d: Gen %d but current gen is %d\n",
-               slot, mon_gen, current_gen);
-        ui_error();
-        sleep_ms(2000);
-        return;
+        printf("INJECT_RESULT fail: slot %d empty\n", slot);
+        ui_error(); sleep_ms(2000); return;
     }
 
-    printf("Inject slot %d (Gen %d species 0x%02X). "
+    const gen_profile_t *p = gen_profile(current_gen);
+    const uint8_t *inject_data = record;
+    uint16_t inject_len = len;
+    static uint8_t conv_buf[DEX_MON_MAX];
+
+    if (mon_gen != current_gen) {
+        bool ok = (mon_gen == 1)
+            ? conv_g1_to_g2_rec(record, conv_buf)
+            : conv_g2_to_g1_rec(record, conv_buf);
+        if (!ok) {
+            printf("INJECT_RESULT fail: Gen %d species 0x%02X has no Gen %d equivalent\n",
+                   mon_gen, species, current_gen);
+            ui_error(); sleep_ms(2000); return;
+        }
+        inject_data = conv_buf;
+        inject_len  = (uint16_t)(p->mon_len + 2 * p->name_len);
+        printf("Cross-gen: converting Gen %d -> Gen %d (species 0x%02X)\n",
+               mon_gen, current_gen, species);
+    }
+
+    printf("Inject slot %d (Gen %d species 0x%02X -> Gen %d). "
            "Cable Club -> Trade Center -> sit at table, pick the Pokémon to give away.\n",
-           slot, mon_gen, species);
+           slot, mon_gen, species, current_gen);
     ui_armed();
 
-    gb_inject_result_t r = inject_run(p, record, len);
+    gb_inject_result_t r = inject_run(p, inject_data, inject_len);
     switch (r) {
-        case GB_INJ_OK:
-            printf("INJECT_RESULT ok\n");
-            ui_ok();
-            break;
-        case GB_INJ_CANCELLED:
-            printf("INJECT_RESULT cancelled\n");
-            ui_error();
-            break;
-        case GB_INJ_DECLINED:
-            printf("INJECT_RESULT declined\n");
-            ui_error();
-            break;
-        default:
-            printf("INJECT_RESULT fail %d\n", (int)r);
-            ui_error();
-            break;
+        case GB_INJ_OK:       printf("INJECT_RESULT ok\n");         ui_ok();    break;
+        case GB_INJ_CANCELLED:printf("INJECT_RESULT cancelled\n");  ui_error(); break;
+        case GB_INJ_DECLINED: printf("INJECT_RESULT declined\n");   ui_error(); break;
+        default:              printf("INJECT_RESULT fail %d\n", (int)r); ui_error(); break;
     }
     sleep_ms(2500);
 }
@@ -190,9 +197,8 @@ static void handle_serial(void) {
         case 'a': do_capture(); show_idle(); break;
         case 'i': {
             int n = read_uint();
-            if (n < 0) n = inject_slot;
-            else inject_slot = n;
-            do_inject(n);
+            if (n >= 0) inject_slot = n;   // explicit index overrides auto
+            do_inject(inject_slot);
             show_idle();
             break;
         }
@@ -216,10 +222,10 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Tap = capture | Hold ~0.7s = switch gen | Hold ~2s = inject slot 0\n"
+           "Tap = capture | Hold ~0.7s = switch gen | Hold ~2s = inject last captured\n"
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'=gen 'r n'=delete 'w'=wipe\n"
-           "Current: Gen %d. Inject slot: %d.\n",
-           storage_count(), storage_capacity(), current_gen, inject_slot);
+           "Current: Gen %d. Cross-gen injection supported.\n",
+           storage_count(), storage_capacity(), current_gen);
     show_idle();
 
     bool prev = false;

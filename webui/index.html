@@ -180,9 +180,11 @@ function card(mon, index) {
     <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}</div>
     <div class="row">
       <button class="btn-sm dl-pk1">Download .pk1</button>
+      <button class="btn-sm inj-mon">Inject</button>
       <button class="btn-sm del-mon">Delete</button>
     </div>`;
   el.querySelector(".dl-pk1").addEventListener("click", () => downloadPk1(mon));
+  el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index));
   el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
   return el;
 }
@@ -317,6 +319,16 @@ function captureNow() {
     await sendCommand("a", l => l.startsWith("CAPTURE_RESULT"), 120000,
                       l => { if (l.startsWith("CAPTURE_RESULT")) result = l; });
     setStatus(result.includes(" ok ") ? "Captured!" : "Capture: " + result);
+    await dump();
+  });
+}
+
+function injectRecord(i) {
+  return withBusy("Injecting… Cable Club → Trade Center → sit at table", async () => {
+    let result = "";
+    await sendCommand("i" + i + "\n", l => l.startsWith("INJECT_RESULT"), 120000,
+                      l => { if (l.startsWith("INJECT_RESULT")) result = l; });
+    setStatus(result.includes(" ok") ? "Injected!" : "Inject: " + result);
     await dump();
   });
 }

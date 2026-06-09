@@ -27,4 +27,9 @@ bool storage_delete(int index);
 // Erase the whole dex.
 void storage_wipe(void);
 
+// Return the logical index (0..count-1) of the most recently stored entry,
+// based on the monotonic write counter. Returns -1 if the vault is empty or
+// all entries predate the counter (written before this feature was added).
+int storage_last_written_index(void);
+
 #endif // STORAGE_H

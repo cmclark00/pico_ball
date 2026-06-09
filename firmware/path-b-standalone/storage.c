@@ -16,9 +16,12 @@
 #define RESERVED_SECTORS 32                         // 128 KB region (erased on wipe)
 #define VAULT_OFFSET (PICO_FLASH_SIZE_BYTES - (RESERVED_SECTORS * SECTOR_SIZE))
 
-// Slot header: ['P','K'][gen][species][len_lo][len_hi][0xFF][0xFF] then payload.
+// Slot header: ['P','K'][gen][species][len_lo][len_hi][cnt_lo][cnt_hi] then payload.
+// Bytes [6..7] are a monotonic 16-bit write counter (little-endian).
+// Legacy slots written before the counter was added have 0xFFFF there.
 #define HDR_LEN 8
 #define MAX_PAYLOAD (SLOT_SIZE - HDR_LEN)          // 120
+#define NO_COUNTER 0xFFFF
 
 static const uint8_t MAGIC[2] = {'P', 'K'};
 
@@ -57,10 +60,25 @@ static void rewrite_slot(int idx, const uint8_t *header_and_data, uint16_t total
     restore_interrupts(ints);
 }
 
+// Scan all used slots and return the maximum write counter (0 if none > 0).
+static uint16_t max_counter(void) {
+    uint16_t mx = 0;
+    for (int i = 0; i < DEX_SLOTS; i++) {
+        if (!slot_used(i)) continue;
+        const uint8_t *p = slot_ptr(i);
+        uint16_t cnt = (uint16_t)p[6] | ((uint16_t)p[7] << 8);
+        if (cnt != NO_COUNTER && cnt > mx) mx = cnt;
+    }
+    return mx;
+}
+
 bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
     if (gen < 1 || gen > 2 || species < 1 || species > 255) return false;
     if (len > MAX_PAYLOAD) return false;
     int idx = (gen - 1) * 256 + species;
+
+    uint16_t cnt = max_counter() + 1;
+    if (cnt == NO_COUNTER) cnt = 1;  // skip reserved sentinel value
 
     uint8_t slot[SLOT_SIZE];
     memset(slot, 0xFF, sizeof(slot));
@@ -70,9 +88,32 @@ bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
     slot[3] = (uint8_t)species;
     slot[4] = (uint8_t)(len & 0xFF);
     slot[5] = (uint8_t)((len >> 8) & 0xFF);
+    slot[6] = (uint8_t)(cnt & 0xFF);
+    slot[7] = (uint8_t)((cnt >> 8) & 0xFF);
     memcpy(slot + HDR_LEN, data, len);
     rewrite_slot(idx, slot, SLOT_SIZE);
     return true;
+}
+
+int storage_last_written_index(void) {
+    uint16_t best_cnt = 0;
+    int best_physical = -1;
+    for (int i = 0; i < DEX_SLOTS; i++) {
+        if (!slot_used(i)) continue;
+        const uint8_t *p = slot_ptr(i);
+        uint16_t cnt = (uint16_t)p[6] | ((uint16_t)p[7] << 8);
+        if (cnt == NO_COUNTER) continue;
+        if (cnt > best_cnt) { best_cnt = cnt; best_physical = i; }
+    }
+    if (best_physical < 0) return -1;
+    // Convert physical slot index to logical (nth used slot).
+    int logical = 0;
+    for (int i = 0; i < DEX_SLOTS; i++) {
+        if (!slot_used(i)) continue;
+        if (i == best_physical) return logical;
+        logical++;
+    }
+    return -1;
 }
 
 uint16_t storage_read_slot(int index, int *gen, int *species, uint8_t *out, uint16_t out_cap) {
