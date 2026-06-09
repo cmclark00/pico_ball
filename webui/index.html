@@ -147,7 +147,7 @@ function statCell(lbl, val) { return `<div><div class="lbl">${lbl}</div><div cla
 
 function card(mon) {
   const slug = spriteSlug(mon.name);
-  const url = `https://img.pokemondb.net/sprites/red-blue/normal/${slug}.png`;
+  const url = `https://img.pokemondb.net/sprites/${mon.spriteSet}/normal/${slug}.png`;
   const hpPct = mon.maxHp ? Math.max(0, Math.min(100, Math.round(100 * mon.hp / mon.maxHp))) : 0;
   const moves = mon.moves.map(m =>
     `<li><span>${m.name}</span><span class="pp">${m.pp} PP</span></li>`).join("");

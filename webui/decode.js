@@ -9,17 +9,17 @@ const REC_LEN = 625;  // minimum (Gen 1); Gen 2 records are 1036
 // Per-generation layout. Offsets within the party section (sec1) and within each
 // 44/48-byte Pokémon struct.
 const GEN1 = {
-  gen: 1, namesKey: "SPECIES_NAMES",
+  gen: 1, namesKey: "SPECIES_NAMES", typesKey: "TYPES_G1", spriteSet: "red-blue",
   sec1: [10, 418], sec2: [428, 197],
   countPos: 0x0B, monPos: 0x13, monLen: 0x2C, otPos: 0x11B, nickPos: 0x15D, nameLen: 0x0B,
-  curHp: 1, maxHp: 0x22, moves: 8, pp: 0x1D, otId: 0x0C, level: 0x21, dv: 0x1B, types: [5, 6],
+  curHp: 1, maxHp: 0x22, moves: 8, pp: 0x1D, otId: 0x0C, level: 0x21, dv: 0x1B,
   stats: [["HP", 0x22], ["ATK", 0x24], ["DEF", 0x26], ["SPD", 0x28], ["SPC", 0x2A]],
 };
 const GEN2 = {
-  gen: 2, namesKey: "SPECIES_NAMES_G2",
+  gen: 2, namesKey: "SPECIES_NAMES_G2", typesKey: "TYPES_G2", spriteSet: "crystal",
   sec1: [10, 444], sec2: [454, 197],
   countPos: 0x0B, monPos: 0x15, monLen: 0x30, otPos: 0x135, nickPos: 0x177, nameLen: 0x0B,
-  curHp: 0x22, maxHp: 0x24, moves: 2, pp: 0x17, otId: 6, level: 0x1F, dv: 0x15, types: null,
+  curHp: 0x22, maxHp: 0x24, moves: 2, pp: 0x17, otId: 6, level: 0x1F, dv: 0x15,
   stats: [["HP", 0x24], ["ATK", 0x26], ["DEF", 0x28], ["SPD", 0x2A], ["SpA", 0x2C], ["SpD", 0x2E]],
 };
 function layoutFor(len) { return len >= 1036 ? GEN2 : GEN1; }
@@ -82,10 +82,7 @@ function decodeRecord(bytes) {
     const dv = { atk: d1 >> 4, def: d1 & 0xF, spd: d2 >> 4, spc: d2 & 0xF };
     dv.hp = ((dv.atk & 1) << 3) | ((dv.def & 1) << 2) | ((dv.spd & 1) << 1) | (dv.spc & 1);
 
-    const types = L.types
-      ? [m[L.types[0]], m[L.types[1]]].map(t => typeNames[t] || "")
-          .filter((t, idx, a) => t && a.indexOf(t) === idx)
-      : [];
+    const types = ((globalThis[L.typesKey] || [])[species] || []).slice();
 
     const raw = new Uint8Array(L.monLen + 2 * L.nameLen);
     raw.set(m, 0);
@@ -93,7 +90,7 @@ function decodeRecord(bytes) {
     raw.set(nickB, L.monLen + L.nameLen);
 
     mons.push({
-      gen: L.gen, species, name, nickname,
+      gen: L.gen, spriteSet: L.spriteSet, species, name, nickname,
       otName: gbText(otB),
       otId: u16(m, L.otId),
       level: m[L.level],
