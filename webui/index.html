@@ -47,6 +47,9 @@
   }
   .sprite img { width: 100%; height: 100%; image-rendering: pixelated; }
   .name { font-size: 18px; font-weight: 700; }
+  .gender { font-size: 15px; font-weight: 700; }
+  .gender.male { color: #6ab7ff; }
+  .gender.female { color: #ff8fce; }
   .nick { font-size: 12px; color: var(--panel2); }
   .badge { display:inline-block; background: var(--ink-dark); color: var(--accent);
     border-radius: 6px; padding: 2px 8px; font-size: 12px; margin-top: 4px; }
@@ -120,8 +123,9 @@ function download(filename, blob) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-function downloadPk1(mon) {
-  download(`${esc(mon.nickname || mon.name)}_${esc(mon.name)}.pk1`,
+function downloadPkx(mon) {
+  const ext = mon.gen === 2 ? "pk2" : "pk1";
+  download(`${esc(mon.nickname || mon.name)}_${esc(mon.name)}.${ext}`,
            new Blob([mon.raw], { type: "application/octet-stream" }));
 }
 
@@ -130,7 +134,9 @@ function monSummary(mon) {
     species: mon.name, nickname: mon.nickname, level: mon.level,
     types: mon.types, hp: `${mon.hp}/${mon.maxHp}`, stats: mon.stats,
     dvs: mon.dv, ot: mon.otName, otId: mon.otId, nicknamed: mon.nicknamed,
-    tradeEvolves: mon.tradeEvolves,
+    tradeEvolves: mon.tradeEvolves, heldItem: mon.heldItemName || null,
+    shiny: mon.shiny, gender: mon.gender,
+    mail: mon.mail || null, mailFrom: mon.mailFrom || null,
     moves: mon.moves.map(m => ({ name: m.name, pp: m.pp })),
     pk1_hex: Array.from(mon.raw).map(b => b.toString(16).padStart(2, "0")).join(""),
   };
@@ -140,6 +146,17 @@ function downloadDexJson(mons, gen) {
   const data = { gen, count: mons.length, pokemon: mons.map(monSummary) };
   download(`dex_gen${gen}.json`,
            new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+}
+
+// A save party holds at most 6 Pokémon, so export the first 6 of the gen group.
+// Gen 2 uses the Crystal layout (see buildSavFromMons); both gens open in PKHeX.
+function downloadSav(mons, gen) {
+  const party = mons.slice(0, 6);
+  const sav = buildSavFromMons(party, gen);
+  if (!sav) { alert("Could not build a .sav for this generation."); return; }
+  const ext = gen === 2 ? "crystal.sav" : "sav";
+  download(`pico_ball_gen${gen}.${ext}`,
+           new Blob([sav], { type: "application/octet-stream" }));
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -154,9 +171,12 @@ function card(mon, index) {
   const typeChips = mon.types.map(t => `<span class="chip">${t}</span>`).join("");
   const flags = [
     mon.gen === 2 ? '<span class="chip">GSC</span>' : "",
+    mon.shiny ? '<span class="chip flag">✨ shiny</span>' : "",
     mon.nicknamed ? '<span class="chip flag">nicknamed</span>' : "",
     mon.tradeEvolves ? '<span class="chip flag">trade-evolves</span>' : "",
   ].join("");
+  const genderMark = mon.gender === "M" ? ' <span class="gender male">♂</span>'
+                   : mon.gender === "F" ? ' <span class="gender female">♀</span>' : "";
   const statsHtml = mon.stats.map(st => statCell(st.label, st.val)).join("");
 
   const el = document.createElement("div");
@@ -166,7 +186,7 @@ function card(mon, index) {
       <div class="sprite"><img alt="${mon.name}" src="${url}"
         onerror="this.replaceWith(document.createTextNode('?'))"></div>
       <div>
-        <div class="name">${mon.name}</div>
+        <div class="name">${mon.name}${genderMark}</div>
         <div class="nick">“${mon.nickname || mon.name}”</div>
         <span class="badge">Lv ${mon.level}</span>
       </div>
@@ -177,13 +197,15 @@ function card(mon, index) {
     <div class="stats">${statsHtml}</div>
     <div class="dv">DVs — Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · Spc ${mon.dv.spc} · HP ${mon.dv.hp}</div>
     <ul class="moves">${moves || "<li>No moves</li>"}</ul>
+    ${mon.heldItemName ? `<div class="meta">Held: ${mon.heldItemName}</div>` : ""}
+    ${mon.mail ? `<div class="meta">✉️ “${esc(mon.mail)}”${mon.mailFrom ? ` — ${esc(mon.mailFrom)}` : ""}</div>` : ""}
     <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}</div>
     <div class="row">
-      <button class="btn-sm dl-pk1">Download .pk1</button>
+      <button class="btn-sm dl-pk1">Download .${mon.gen === 2 ? "pk2" : "pk1"}</button>
       <button class="btn-sm inj-mon">Inject</button>
       <button class="btn-sm del-mon">Delete</button>
     </div>`;
-  el.querySelector(".dl-pk1").addEventListener("click", () => downloadPk1(mon));
+  el.querySelector(".dl-pk1").addEventListener("click", () => downloadPkx(mon));
   el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index));
   el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
   return el;
@@ -217,6 +239,8 @@ function render(entries) {
     head.innerHTML = `<h2 class="grow">Gen ${gen} dex — ${group.length} Pokémon</h2>`;
     head.appendChild(headButton("Download JSON", () =>
       downloadDexJson(group.map(e => e.mon), gen)));
+    head.appendChild(headButton("Download .sav", () =>
+      downloadSav(group.map(e => e.mon), gen)));
     sec.appendChild(head);
 
     const grid = document.createElement("div");

@@ -24,15 +24,30 @@ typedef struct {
     uint16_t ot_pos;               // first OT name (0x11B / 0x135)
     uint16_t nick_pos;             // first nickname (0x15D / 0x177)
     uint8_t  name_len;             // OT/nickname length (0x0B)
+
+    // Mail layout (Gen 2 only; 0 for Gen 1). Mail lives in the last section; a
+    // mon carries mail when its held item is a Mail item (see gp_is_mail_item).
+    uint16_t mail_pos;             // first mail entry within the mail section (0x00)
+    uint8_t  mail_len;             // bytes per mail entry (0x21), 0 = no mail
+    uint16_t mail_sender_pos;      // first mail-sender entry (0xC6)
+    uint8_t  mail_sender_len;      // bytes per sender entry (0x0E)
 } gen_profile_t;
 
-// Per-mon record we store in the dex = struct + OT name + nickname.
-#define DEX_MON_MAX (0x30 + 2 * 0x0B)  // 70 (Gen 2 is the larger)
+// Gen 2 Mail items (from gsc/ids_mail.bin): Flower Mail + the 0xB5..0xBD mails.
+static inline int gp_is_mail_item(uint8_t item) {
+    return item == 0x9E || (item >= 0xB5 && item <= 0xBD);
+}
+
+// Per-mon record we store in the dex = struct + OT name + nickname (+ mail +
+// sender when the mon holds Mail). Gen 2 is the larger; fits MAX_PAYLOAD (120).
+#define DEX_MON_MAX (0x30 + 2 * 0x0B + 0x21 + 0x0E)  // 117
 
 // Max section-1 size across generations (Gen 2 = 444 > Gen 1 = 418).
 #define GB_SEC1_MAX 444
 // Patch-list section size (same for Gen 1 and Gen 2).
 #define GB_SEC2_LEN 197
+// Mail section size (Gen 2 only = 385; Gen 1 has no mail section).
+#define GB_SEC3_MAX 385
 
 const gen_profile_t *gen_profile(int gen);
 
