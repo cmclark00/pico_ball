@@ -130,7 +130,15 @@ int extract_mons(const gen_profile_t *p, uint8_t *raw,
 
     int count = sec1[p->count_pos];
     if (count < 1 || count > 6) return 0;
-    uint16_t rec_len = p->mon_len + 2 * p->name_len;
+
+    // Mail (Gen 2) lives in the last section, untouched by the patch pass above.
+    const uint8_t *msec = NULL;
+    if (p->mail_len) {
+        msec = raw;
+        for (int s = 0; s < p->n_sections - 1; s++) msec += p->lens[s];
+    }
+
+    uint16_t base_len = p->mon_len + 2 * p->name_len;
     for (int i = 0; i < count; i++) {
         uint8_t *st = sec1 + p->mon_pos + i * p->mon_len;
         uint8_t *ot = sec1 + p->ot_pos + i * p->name_len;
@@ -139,7 +147,17 @@ int extract_mons(const gen_profile_t *p, uint8_t *raw,
         memcpy(data[i], st, p->mon_len);
         memcpy(data[i] + p->mon_len, ot, p->name_len);
         memcpy(data[i] + p->mon_len + p->name_len, nk, p->name_len);
-        lens[i] = rec_len;
+        lens[i] = base_len;
+
+        // If this mon holds Mail (held item at struct byte 0x01), append its
+        // mail message + sender so the record round-trips on inject.
+        if (msec && gp_is_mail_item(st[1])) {
+            uint8_t *dst = data[i] + base_len;
+            memcpy(dst, msec + p->mail_pos + i * p->mail_len, p->mail_len);
+            memcpy(dst + p->mail_len,
+                   msec + p->mail_sender_pos + i * p->mail_sender_len, p->mail_sender_len);
+            lens[i] = base_len + p->mail_len + p->mail_sender_len;
+        }
     }
     return count;
 }

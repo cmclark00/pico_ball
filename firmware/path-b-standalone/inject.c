@@ -111,6 +111,23 @@ static void build_sec1(const gen_profile_t *p, const uint8_t *mon_rec,
     memcpy(sec1 + p->nick_pos, mon_rec + p->mon_len + p->name_len, p->name_len);
 }
 
+// Build the mail section (Gen 2 section 3) from the baked empty template, then
+// splice in our mon's mail when it holds Mail. mon_rec carrying mail is laid out
+// [struct][OT][nick][mail(mail_len)][sender(mail_sender_len)].
+static void build_sec3(const gen_profile_t *p, const uint8_t *mon_rec,
+                       uint16_t rec_len, uint8_t *sec3) {
+    int idx = p->n_sections - 1;
+    memcpy(sec3, p->baked[idx], p->lens[idx]);
+    uint16_t base_len = p->mon_len + 2 * p->name_len;
+    uint16_t with_mail = base_len + p->mail_len + p->mail_sender_len;
+    if (p->mail_len && rec_len >= with_mail && gp_is_mail_item(mon_rec[1])) {
+        // Our injected Pokémon is party slot 0, so it owns mail entry 0.
+        memcpy(sec3 + p->mail_pos, mon_rec + base_len, p->mail_len);
+        memcpy(sec3 + p->mail_sender_pos,
+               mon_rec + base_len + p->mail_len, p->mail_sender_len);
+    }
+}
+
 // Build the patch list (section 2) for the given section-1 data.
 // Any 0xFE byte in sec1[0x13..] is replaced with 0xFF (no_input_alternative)
 // and its 1-based position within its 0xFC-byte pass is recorded in sec2.
@@ -151,16 +168,18 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
     // sections 0 and 3 reuse the baked templates unchanged).
     static uint8_t inject_sec1[INJECT_SEC1_MAX];
     static uint8_t inject_sec2[GB_SEC2_LEN];   // same size for Gen 1 and Gen 2
+    static uint8_t inject_sec3[GB_SEC3_MAX];   // Gen 2 mail section
 
     build_sec1(p, mon_rec, inject_sec1);
     memset(inject_sec2, 0, p->lens[2]);
     build_sec2(inject_sec1, (int)p->lens[1], inject_sec2, (int)p->lens[2]);
+    if (p->n_sections > 3) build_sec3(p, mon_rec, rec_len, inject_sec3);
 
     const uint8_t *inject_secs[4] = {
         p->baked[0],   // section 0: baked random seed
         inject_sec1,   // section 1: our inject party
         inject_sec2,   // section 2: patch list for our party
-        (p->n_sections > 3) ? p->baked[3] : NULL,  // section 3: mail (Gen 2, empty)
+        (p->n_sections > 3) ? inject_sec3 : NULL,  // section 3: mail (Gen 2)
     };
 
     // Run the section exchange, recording the cartridge's party bytes.
