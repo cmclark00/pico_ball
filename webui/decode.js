@@ -151,6 +151,9 @@ function decodeMonRecord(bytes, gen) {
   if (gen === 2 && bytes.length >= base + MAIL + SENDER && isMailItem(mon.heldItem)) {
     mon.mail = gbText(bytes.subarray(base, base + MAIL));
     mon.mailFrom = gbText(bytes.subarray(base + MAIL, base + MAIL + SENDER));
+    // decodeMon's raw is only struct+OT+nick; keep the appended mail+sender so the
+    // downloaded .pk2 / JSON round-trip the full record (matches what we display).
+    mon.raw = bytes.slice(0, base + MAIL + SENDER);
   }
   return mon;
 }
