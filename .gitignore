@@ -28,3 +28,5 @@ hardware/kicad/drc.rpt
 hardware/kicad/*.kicad_prl
 hardware/kicad/logs/
 hardware/kicad/.history/
+hardware/kicad/*.lck
+hardware/kicad/_autosave-*
