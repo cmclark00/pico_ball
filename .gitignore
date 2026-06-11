@@ -18,3 +18,13 @@ firmware/**/build/
 
 # Vendored bridge firmware (cloned + patched; reproducible per firmware/README.md)
 firmware/path-a-build/
+hardware/reference/game-boy-zero-link-board/
+hardware/kicad/freerouting.jar
+hardware/kicad/freerouting.log
+hardware/kicad/*.dsn
+hardware/kicad/*.ses
+hardware/kicad/*.png
+hardware/kicad/drc.rpt
+hardware/kicad/*.kicad_prl
+hardware/kicad/logs/
+hardware/kicad/.history/
