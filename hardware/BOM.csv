@@ -1,0 +1,15 @@
+Ref,Qty,Part,Package,Notes
+U1,1,Raspberry Pi Pico 2 W,castellated module,solder flush; micro-USB at right board edge; covers H4 (3-point mount)
+U2,1,SparkFun BOB-12009 logic level converter,12-pin breakout module,same proven shifter as game-boy-zero-link-board; HV side powered by GBVCC from link cable
+D1,1,SS34 Schottky,SMA (bottom side),PiSugar 5V -> VSYS diode-OR
+C1,1,10uF,0805 (bottom side),VSYS bulk
+JP1,1,solder jumper,SMD (bottom side),bridge VBUS -> 5V rail when running a HAT without PiSugar (default open)
+R1-R2,2,4.7k,0603,I2C pull-ups to 3V3 for PiSugar fuel gauge/RTC
+J1,1,GBC/GBA link edge connector,PCB edge tab (6.5mm),footprint 1:1 from game-boy-zero-link-board; cable plugs onto the tab
+J2,1,2x20 male header 2.54mm,THT,Pi HAT header; PiSugar I2C pogo pins contact pins 3/5 from below
+PB1-PB4,4,bare copper pogo pads,2.2mm bottom copper,clones of official Zero 2 W 5V/GND test pads (PiSugar power)
+H1-H3,3,M2.5 mounting holes,NPTH 2.75mm,Pi Zero positions; 4th hole omitted (under U1 pads -> 3-point mount)
+PCB,1,2-layer 65x30mm + 6.5mm link tab,JLCPCB,1.6mm FR4; Pi Zero outline r3 corners
+,1,Waveshare 1.3inch LCD HAT,off-board (~$15),ST7789 240x240 + joystick + K1-K3; plugs on J2
+,1,PiSugar 3 1200mAh (Zero size),off-board (~$40),battery + fuel gauge 0x57 + RTC 0x68; charges via own USB-C
+,,rev-B candidates,,side reset switch (RUN); WS2812 + USER button on spare GP18-GP21; AP2112K-3.3 backup LDO
