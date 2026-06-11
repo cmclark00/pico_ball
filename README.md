@@ -56,6 +56,12 @@ source host/.venv/bin/activate
 python host/extract.py          # saves vault/*.pk1 + vault/*.json, then cancels
 python host/extract.py --gen 2  #   ...or Gold/Silver/Crystal (Gen 2)
 
+# Gen 3 (Ruby/Sapphire/Emerald/FireRed/LeafGreen): flash the reconfigurable
+# firmware (third_party/gen3/gbusb_reconfigurable.uf2), then multiboot the
+# GBA-side trade program and capture:
+python host/gen3_boot.py        # upload Gen3-to-GenX into the GBA's RAM
+python host/extract.py --gen 3  # saves vault/*.pk3 (PKHeX party format)
+
 # 5. (Optional) Trade a vaulted Pokémon back INTO a cartridge:
 python host/inject.py           # pick a vault mon; the cart's given-up mon is
                                 # auto-saved to the vault, so nothing is lost

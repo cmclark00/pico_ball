@@ -32,6 +32,10 @@
   #unsupported { display:none; background:#5a1a1a; color:#fdd; padding:12px 24px; }
   main { padding: 24px; }
   .hint { color: var(--panel2); font-size: 13px; margin: 0 0 18px; max-width: 720px; }
+  #dropzone { border: 2px dashed var(--panel2); border-radius: 10px; padding: 14px;
+    color: var(--panel2); font-size: 13px; text-align: center; cursor: pointer;
+    margin: 0 0 18px; max-width: 720px; }
+  #dropzone.drag { border-color: var(--accent); color: var(--accent); }
   .records > h2 { color: var(--accent); font-size: 15px; border-bottom: 2px solid var(--panel);
     padding-bottom: 6px; margin: 28px 0 14px; }
   .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
@@ -101,13 +105,20 @@
   <p class="hint">
     Plug the standalone vault board into USB and click <b>Connect device</b>, then
     pick the serial port. The page asks the board for its stored captures and
-    decodes the Gen 1 Pokémon right here — nothing is copied to disk.
+    decodes the Pokémon right here — nothing is copied to disk. You can also
+    <b>drop vault files</b> (.pk1 / .pk2 / .pk3 / capture .json) below to view
+    them — Gen 3 captures come from the tethered host, not the device.
   </p>
+  <div id="dropzone">Drop vault records here (or click to pick files)
+    <input id="filepick" type="file" multiple accept=".pk1,.pk2,.pk3,.json,.bin"
+           style="display:none"></div>
+  <div id="filecards"></div>
   <div id="out"></div>
 </main>
 <footer>pico_ball · Web Serial → on-device flash · sprites: Pokémon DB (Red/Blue), offline-safe fallback</footer>
 
 <script src="pokedata.js"></script>
+<script src="pokedata_gen3.js"></script>
 <script src="decode.js"></script>
 <script>
 "use strict";
@@ -124,8 +135,7 @@ function download(filename, blob) {
 }
 
 function downloadPkx(mon) {
-  const ext = mon.gen === 2 ? "pk2" : "pk1";
-  download(`${esc(mon.nickname || mon.name)}_${esc(mon.name)}.${ext}`,
+  download(`${esc(mon.nickname || mon.name)}_${esc(mon.name)}.pk${mon.gen}`,
            new Blob([mon.raw], { type: "application/octet-stream" }));
 }
 
@@ -170,10 +180,12 @@ function card(mon, index) {
     `<li><span>${m.name}</span><span class="pp">${m.pp} PP</span></li>`).join("");
   const typeChips = mon.types.map(t => `<span class="chip">${t}</span>`).join("");
   const flags = [
-    mon.gen === 2 ? '<span class="chip">GSC</span>' : "",
+    mon.gen === 2 ? '<span class="chip">GSC</span>' :
+    mon.gen === 3 ? '<span class="chip">RSE</span>' : "",
     mon.shiny ? '<span class="chip flag">✨ shiny</span>' : "",
     mon.nicknamed ? '<span class="chip flag">nicknamed</span>' : "",
     mon.tradeEvolves ? '<span class="chip flag">trade-evolves</span>' : "",
+    mon.checksumValid === false ? '<span class="chip flag">bad checksum</span>' : "",
   ].join("");
   const genderMark = mon.gender === "M" ? ' <span class="gender male">♂</span>'
                    : mon.gender === "F" ? ' <span class="gender female">♀</span>' : "";
@@ -195,19 +207,23 @@ function card(mon, index) {
     <div class="hpbar"><div style="width:${hpPct}%"></div></div>
     <div class="meta">HP ${mon.hp}/${mon.maxHp}</div>
     <div class="stats">${statsHtml}</div>
-    <div class="dv">DVs — Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · Spc ${mon.dv.spc} · HP ${mon.dv.hp}</div>
+    <div class="dv">${mon.gen === 3
+      ? `IVs — HP ${mon.dv.hp} · Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · SpA ${mon.dv.spa} · SpD ${mon.dv.spdef}`
+      : `DVs — Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · Spc ${mon.dv.spc} · HP ${mon.dv.hp}`}</div>
     <ul class="moves">${moves || "<li>No moves</li>"}</ul>
     ${mon.heldItemName ? `<div class="meta">Held: ${mon.heldItemName}</div>` : ""}
     ${mon.mail ? `<div class="meta">✉️ “${esc(mon.mail)}”${mon.mailFrom ? ` — ${esc(mon.mailFrom)}` : ""}</div>` : ""}
     <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}</div>
     <div class="row">
-      <button class="btn-sm dl-pk1">Download .${mon.gen === 2 ? "pk2" : "pk1"}</button>
-      <button class="btn-sm inj-mon">Inject</button>
-      <button class="btn-sm del-mon">Delete</button>
+      <button class="btn-sm dl-pk1">Download .pk${mon.gen}</button>
+      ${index >= 0 ? `<button class="btn-sm inj-mon">Inject</button>
+      <button class="btn-sm del-mon">Delete</button>` : ""}
     </div>`;
   el.querySelector(".dl-pk1").addEventListener("click", () => downloadPkx(mon));
-  el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index));
-  el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
+  if (index >= 0) {
+    el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index));
+    el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
+  }
   return el;
 }
 
@@ -378,6 +394,63 @@ document.getElementById("refresh").addEventListener("click", () =>
   withBusy("Reading…", dump));
 document.getElementById("capture").addEventListener("click", captureNow);
 document.getElementById("wipe").addEventListener("click", wipeAll);
+
+// --- vault-file viewer (drag & drop / file picker) -----------------------------
+// Gen is inferred from the record length: 66 = Gen 1; 70/117 = Gen 2;
+// 100/149 = Gen 3. Capture .json files carry the record as hex.
+function genForLength(n) {
+  if (n === 66) return 1;
+  if (n === 70 || n === 117) return 2;
+  if (n === 100 || n === 149) return 3;
+  return 0;
+}
+
+async function loadVaultFile(file) {
+  if (file.name.endsWith(".json")) {
+    const j = JSON.parse(await file.text());
+    const hex = j.raw_record_hex || j.raw_pk1_hex;
+    if (!hex) return null;
+    const bytes = hexToBytes(hex);
+    const gen = genForLength(bytes.length);
+    return gen ? decodeMonRecord(bytes, gen) : null;
+  }
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const gen = genForLength(bytes.length);
+  return gen ? decodeMonRecord(bytes, gen) : null;
+}
+
+async function showVaultFiles(files) {
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  let n = 0;
+  for (const f of files) {
+    try {
+      const mon = await loadVaultFile(f);
+      if (mon) { grid.appendChild(card(mon, -1)); n++; }
+      else console.warn("Unrecognized record:", f.name);
+    } catch (e) { console.warn("Failed to decode", f.name, e); }
+  }
+  const out = document.getElementById("filecards");
+  out.innerHTML = "";
+  if (n) {
+    const sec = document.createElement("div");
+    sec.className = "records";
+    sec.innerHTML = `<div class="cap-head"><h2 class="grow">Vault files — ${n} Pokémon</h2></div>`;
+    sec.appendChild(grid);
+    out.appendChild(sec);
+  }
+}
+
+const dz = document.getElementById("dropzone");
+const fp = document.getElementById("filepick");
+dz.addEventListener("click", () => fp.click());
+fp.addEventListener("change", () => showVaultFiles([...fp.files]));
+dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });
+dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+dz.addEventListener("drop", e => {
+  e.preventDefault(); dz.classList.remove("drag");
+  showVaultFiles([...e.dataTransfer.files]);
+});
 </script>
 </body>
 </html>

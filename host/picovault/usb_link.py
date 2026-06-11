@@ -127,3 +127,33 @@ class UsbLink:
         if num_bytes is None:
             num_bytes = MAX_PACKET
         return self.ep_in.read(num_bytes, timeout=int(READ_TIMEOUT_S * 1000))
+
+    def drain(self):
+        """Read and discard anything pending on the IN endpoint."""
+        while True:
+            try:
+                if len(self.receive_byte_raw()) == 0:
+                    return
+            except Exception:  # noqa: BLE001 - timeout = empty
+                return
+
+    def configure(self, bytes_per_transfer, us_between=1000):
+        """Send the reconfigurable-firmware config packet (transfer width +
+        pacing). Gen 3 needs 4-byte SIO32 transfers; gens 1/2 use 1 byte.
+
+        Returns True when the firmware acknowledged the packet (i.e. it is
+        Lorenzooone's gb-link-firmware-reconfigurable). The stock stacksmashing
+        firmware doesn't understand it — fine for 1-byte mode, fatal for Gen 3,
+        so callers should treat False as an error when gen == 3.
+        """
+        # Same magic preamble the engine's usb_trading.py sends.
+        cfg = [0xCA, 0xFE] * 8 + [0xDE, 0xAD, 0xBE, 0xEF] * 4
+        cfg += [us_between & 0xFF, (us_between >> 8) & 0xFF,
+                (us_between >> 16) & 0xFF, bytes_per_transfer & 0xFF]
+        self.drain()
+        self.send_list(cfg, chunk_size=len(cfg))
+        try:
+            ack = self.receive_byte_raw()
+        except Exception:  # noqa: BLE001
+            return False
+        return len(ack) >= 1 and int.from_bytes(bytes(ack), byteorder="big") == 1

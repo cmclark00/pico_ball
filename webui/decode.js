@@ -137,9 +137,129 @@ function decodeRecord(bytes) {
 // Gen 2 Mail items (gsc/ids_mail.bin): Flower Mail + the 0xB5..0xBD mails.
 function isMailItem(it) { return it === 0x9E || (it >= 0xB5 && it <= 0xBD); }
 
+// --- Gen 3 (.pk3) ------------------------------------------------------------
+
+// Gen 3 (Western) text codes.
+function g3Text(bytes) {
+  let s = "";
+  for (const v of bytes) {
+    if (v === 0xFF) break;
+    if (v === 0x00) { s += " "; continue; }
+    if (v >= 0xA1 && v <= 0xAA) s += String.fromCharCode(48 + v - 0xA1);
+    else if (v >= 0xBB && v <= 0xD4) s += String.fromCharCode(65 + v - 0xBB);
+    else if (v >= 0xD5 && v <= 0xEE) s += String.fromCharCode(97 + v - 0xD5);
+    else if (v === 0xAB) s += "!"; else if (v === 0xAC) s += "?";
+    else if (v === 0xAD) s += "."; else if (v === 0xAE) s += "-";
+    else if (v === 0xB4) s += "'"; else if (v === 0xB5) s += "♂";
+    else if (v === 0xB6) s += "♀"; else s += "?";
+  }
+  return s.trim();
+}
+
+// The 24 substructure orders (same generation loop as the engine's
+// init_enc_positions): each entry packs, per substructure k (growth=0,
+// attacks=1, evs=2, misc=3), which quarter of the decrypted block holds it.
+const G3_ENC_POSITIONS = (() => {
+  const out = [];
+  for (let i = 0; i < 4; i++)
+    for (let j = 0; j < 4; j++) {
+      if (j === i) continue;
+      for (let k = 0; k < 4; k++) {
+        if (k === i || k === j) continue;
+        for (let l = 0; l < 4; l++) {
+          if (l === i || l === j || l === k) continue;
+          out.push((0 << (i * 2)) | (1 << (j * 2)) | (2 << (k * 2)) | (3 << (l * 2)));
+        }
+      }
+    }
+  return out;
+})();
+
+function u16le(b, o) { return b[o] | (b[o + 1] << 8); }
+function u32le(b, o) { return (b[o] | (b[o+1] << 8) | (b[o+2] << 16) | (b[o+3] << 24)) >>> 0; }
+
+// Decode a Gen 3 record: the 100-byte party struct (names inside, 48-byte
+// encrypted substructure block), optionally followed by mail/version/ribbon
+// (the 149-byte engine record). Tables come from pokedata_gen3.js.
+function decodeMonG3(bytes) {
+  const pid = u32le(bytes, 0), otid = u32le(bytes, 4);
+  const key = pid ^ otid;
+
+  // Decrypt the 48-byte block and validate its checksum.
+  const dec = new Uint8Array(48);
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    const w = (u32le(bytes, 32 + i * 4) ^ key) >>> 0;
+    dec[i*4] = w & 0xFF; dec[i*4+1] = (w >>> 8) & 0xFF;
+    dec[i*4+2] = (w >>> 16) & 0xFF; dec[i*4+3] = (w >>> 24) & 0xFF;
+    sum = (sum + (w & 0xFFFF) + (w >>> 16)) & 0xFFFF;
+  }
+  const checksumValid = sum === u16le(bytes, 28);
+
+  // Locate the substructures for this PID.
+  const pos = G3_ENC_POSITIONS[pid % 24];
+  const sub = k => { const q = (pos >> (k * 2)) & 3; return dec.subarray(q * 12, q * 12 + 12); };
+  const growth = sub(0), attacks = sub(1), evs = sub(2), misc = sub(3);
+
+  const species = u16le(growth, 0);                       // internal id
+  const national = (globalThis.INTERNAL_TO_NATIONAL_G3 || [])[species] || 0;
+  const name = (globalThis.SPECIES_NAMES_G3 || [])[species] || ("#" + species);
+  const moveNames = globalThis.MOVE_NAMES_G3 || [];
+
+  const heldItem = u16le(growth, 2);
+  const heldItemName = heldItem ? ((globalThis.ITEM_NAMES_G3 || [])[heldItem] || ("#" + heldItem)) : "";
+
+  const ivWord = u32le(misc, 4);
+  const ivs = {
+    hp: ivWord & 31, atk: (ivWord >>> 5) & 31, def: (ivWord >>> 10) & 31,
+    spd: (ivWord >>> 15) & 31, spa: (ivWord >>> 20) & 31, spdef: (ivWord >>> 25) & 31,
+  };
+
+  const tid = otid & 0xFFFF, sid = otid >>> 16;
+  const shiny = ((tid ^ sid ^ (pid >>> 16) ^ (pid & 0xFFFF)) & 0xFFFF) < 8;
+
+  // Gen 3 gender: female iff (PID & 0xFF) < threshold (rate in female eighths).
+  const rate = (globalThis.GENDER_RATE_G3 || [])[national];
+  let gender = null;
+  if (rate !== undefined && rate >= 0) {
+    if (rate === 0) gender = "M";
+    else if (rate === 8) gender = "F";
+    else gender = (pid & 0xFF) < rate * 32 - 1 ? "F" : "M";
+  }
+
+  const types = ((globalThis.TYPES_G3 || [])[national] || []).slice();
+  const nickname = g3Text(bytes.subarray(8, 18));
+
+  const stats = [["HP", 88], ["ATK", 90], ["DEF", 92], ["SPD", 94], ["SpA", 96], ["SpD", 98]]
+    .map(([label, off]) => ({ label, val: u16le(bytes, off) }));
+
+  return {
+    gen: 3, spriteSet: "emerald", species, name, nickname,
+    otName: g3Text(bytes.subarray(20, 27)),
+    otId: tid,
+    level: bytes[84],
+    heldItem, heldItemName, shiny, gender,
+    hp: u16le(bytes, 86),
+    maxHp: u16le(bytes, 88),
+    types, stats,
+    dv: ivs,                       // 0-31 IVs (shown where gens 1/2 show DVs)
+    checksumValid,
+    nicknamed: nickname.toUpperCase() !== name.toUpperCase(),
+    tradeEvolves: false,
+    moves: [0, 1, 2, 3].map(k => ({
+      id: u16le(attacks, k * 2),
+      name: moveNames[u16le(attacks, k * 2)] || ("#" + u16le(attacks, k * 2)),
+      pp: attacks[8 + k],
+    })).filter(x => x.id !== 0),
+    raw: bytes.slice(0, 100),      // the PKHeX-importable party .pk3
+    rawFull: bytes.slice(),
+  };
+}
+
 // Decode a single dex entry: struct + OT name + nickname (+ mail + sender when a
-// Gen 2 mon holds Mail), for the given gen.
+// Gen 2 mon holds Mail), for the given gen. Gen 3 records use their own layout.
 function decodeMonRecord(bytes, gen) {
+  if (gen === 3) return decodeMonG3(bytes);
   const L = gen === 2 ? GEN2 : GEN1;
   const m = bytes.subarray(0, L.monLen);
   const otB = bytes.subarray(L.monLen, L.monLen + L.nameLen);
@@ -244,6 +364,6 @@ function buildSavFromMons(mons, gen) {
   return sav;
 }
 
-const _exports = { decodeRecord, decodeMonRecord, decodeMon, spriteSlug, hexToBytes, gbText, applyPatches, buildSav, buildSavFromMons, layoutFor, REC_LEN };
+const _exports = { decodeRecord, decodeMonRecord, decodeMon, decodeMonG3, spriteSlug, hexToBytes, gbText, g3Text, applyPatches, buildSav, buildSavFromMons, layoutFor, REC_LEN };
 if (typeof globalThis !== "undefined") Object.assign(globalThis, _exports);
 if (typeof module !== "undefined") module.exports = _exports;
