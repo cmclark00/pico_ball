@@ -2556,17 +2556,6 @@
 			(remove_unused_layers no)
 			(uuid "92761c09-a591-4c8e-af4d-e0e2262cb01d")
 		)
-		(model "C:/Users/ncara/OneDrive/IoT/Tools/KiCad/RP-Pico Libraries/Pico.wrl"
-			(offset
-				(xyz 0 0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz 0 0 0)
-			)
-		)
 	)
 	(footprint "pico-ball-deck:R_0603"
 		(layer "F.Cu")
@@ -3889,17 +3878,6 @@
 			(pinfunction "EL")
 			(pintype "input")
 			(uuid "3652609e-c0a6-453c-827b-464586fb1591")
-		)
-		(model "${KIPRJMOD}/libraries/BOB-12009 Libraries/BOB-12009.STEP"
-			(offset
-				(xyz -0.4 -0 0)
-			)
-			(scale
-				(xyz 1 1 1)
-			)
-			(rotate
-				(xyz -90 0 0)
-			)
 		)
 	)
 	(footprint "pico-ball-deck:PiSugar_PogoPad_D2.2mm"

@@ -183,7 +183,10 @@ def set_nets(fp, mapping):
 
 
 def strip_sch_links(fp):
-    for key in ("path", "property"):
+    # "model" entries point at 3D shape files (.wrl/.STEP) that live in the
+    # reference repo (one is even an absolute path on the original author's
+    # machine) - drop them so KiCad doesn't warn about missing models.
+    for key in ("path", "property", "model"):
         for n in findall(fp, key):
             fp.remove(n)
 
@@ -343,6 +346,7 @@ def main():
         n = find(pico_mod, key)
         if n:
             pico_mod.remove(n)
+    strip_sch_links(pico_mod)
     set_reference(pico_mod, "U1")
     # footprint local -y = USB end; rot 270 points USB toward +x (right edge).
     # Position is constrained on three sides: the castellation pads extend
