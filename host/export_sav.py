@@ -58,12 +58,12 @@ GSC_MON_LEN = 0x30      # 48-byte party struct (held item at byte 0x01)
 GSC_PARTY_BLOCK_LEN = 1 + 7 + 6 * GSC_MON_LEN + 6 * NAME_LEN + 6 * NAME_LEN  # 428
 GSC_GAMES = {
     "c": {
-        "ot": 0x200B, "party": 0x2865,
+        "ot": 0x200B, "party": 0x2865, "box": 0x2D10,
         "ck_start": 0x2009, "ck_end": 0x2B82, "ck1": 0x2D0D, "ck2": 0x1F0D,
         "backups": [(0x2009, 0xB7A, 0x1209)],
     },
     "gs": {
-        "ot": 0x200B, "party": 0x288A,
+        "ot": 0x200B, "party": 0x288A, "box": 0x2D6C,
         "ck_start": 0x2009, "ck_end": 0x2D68, "ck1": 0x2D69, "ck2": 0x7E6D,
         "backups": [
             (0x2009, 0x222F - 0x2009, 0x15C7),
@@ -99,6 +99,10 @@ def build_sav_gsc(party_block, ot_name, game="c"):
     sav = bytearray(SAV_SIZE)
     sav[g["party"]:g["party"] + len(party_block)] = party_block
     sav[g["ot"]:g["ot"] + NAME_LEN] = ot_name
+    # Empty current box (count 0 + 0xFF terminator): PKHeX detects a Gen 2 save by
+    # validating BOTH the party AND current-box lists, so the box can't be blank.
+    sav[g["box"]] = 0
+    sav[g["box"] + 1] = 0xFF
     s = sum(sav[g["ck_start"]:g["ck_end"] + 1]) & 0xFFFF   # 16-bit byte sum
     for pos in (g["ck1"], g["ck2"]):
         sav[pos] = s & 0xFF

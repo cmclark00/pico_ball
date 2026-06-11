@@ -200,7 +200,7 @@ const SAV_LAYOUTS = {
     ck: { pos: 0x3523, start: 0x2598, end: 0x3522, bits: 8 },
   },
   2: {  // Crystal (US/International)
-    monLen: 0x30, partyOff: 0x2865, otOff: 0x200B,
+    monLen: 0x30, partyOff: 0x2865, otOff: 0x200B, boxOff: 0x2D10,
     ck: { start: 0x2009, end: 0x2B82, pos: 0x2D0D, pos2: 0x1F0D, bits: 16 },
     backups: [[0x2009, 0xB7A, 0x1209]],
   },

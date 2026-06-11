@@ -5,6 +5,8 @@
 #   3. the browser code (decode.js buildSav -> buildSavFromMons) builds one from
 #      the full record, and the two must be byte-identical
 #   4. both stored checksums must equal the primary-region sum (PKHeX-valid)
+#   5. PKHeX's actual Gen 2 detection passes (party AND current-box lists valid),
+#      ported from SaveUtil.IsListValidG12 / IsG2CrystalINT
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -49,6 +51,12 @@ s = sum(sav_py[g["ck_start"]:g["ck_end"] + 1]) & 0xFFFF
 ck1 = sav_py[g["ck1"]] | (sav_py[g["ck1"] + 1] << 8)
 ck2 = sav_py[g["ck2"]] | (sav_py[g["ck2"] + 1] << 8)
 
+# PKHeX detection (SaveUtil.IsG2CrystalINT -> HasListAt(party 0x2865, box 0x2D10)).
+def list_valid(buf, off, maxc=20):
+    count = buf[off]
+    return count <= maxc and buf[off + 1 + count] == 0xFF
+detected = list_valid(sav_py, g["party"]) and list_valid(sav_py, g["box"])
+
 ok = True
 if sav_py != sav_js:
     ok = False; print("FAIL: Python and JS .sav differ")
@@ -56,9 +64,12 @@ if not (ck1 == s == ck2):
     ok = False; print(f"FAIL: checksum mismatch sum={s:#06x} ck1={ck1:#06x} ck2={ck2:#06x}")
 if sav_py[g["party"] + 8 + 1] != 0x8f:
     ok = False; print("FAIL: held item not preserved into the save")
+if not detected:
+    ok = False; print("FAIL: PKHeX Gen 2 detection would reject (party/box list invalid)")
 if not ok:
     sys.exit(1)
 print(f"  Python == JS .sav (byte-identical, {len(sav_py)}B)")
 print(f"  Crystal checksums valid ({ck1:#06x}); held item preserved")
+print("  PKHeX detection OK (party + current-box lists valid)")
 print("PASS")
 PY
