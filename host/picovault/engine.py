@@ -20,7 +20,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 ENGINE_DIR = os.path.join(REPO_ROOT, "third_party", "PokemonGB_Online_Trades")
 
 # Per-generation data folder under the engine's useful_data/.
-GEN_FOLDER = {1: "rby", 2: "gsc"}
+GEN_FOLDER = {1: "rby", 2: "gsc", 3: "rse"}
+
+# Gen 3 artifacts fetched by scripts/setup.sh (third_party/ is gitignored).
+GEN3_DIR = os.path.join(REPO_ROOT, "third_party", "gen3")
+GEN3_MULTIBOOT_GBA = os.path.join(GEN3_DIR, "pokemon_gen3_to_genx_mb.gba")
 
 
 def _base_party_bin(gen):
@@ -82,13 +86,21 @@ def _make_menu(verbose, sanity, gen):
 
 
 def build_trader(link, verbose=True, sanity=True, gen=1):
-    """Construct an RBYTrading (gen 1) or GSCTrading (gen 2) bound to the
-    given UsbLink-like transport. The capture flow is identical for both."""
+    """Construct an RBYTrading (gen 1), GSCTrading (gen 2) or RSESPTrading
+    (gen 3) bound to the given UsbLink-like transport.
+
+    Gen 3 talks to the Gen3-to-GenX program multibooted into the GBA (not to
+    the game directly) over 4-byte SIO32 transfers, so the link must have been
+    configured for 4-byte mode first (UsbLink.configure) and pre_sleep is on
+    (the engine paces transfers so the GBA-side slave can prepare each word).
+    """
     _ensure_engine_importable()
     if gen == 1:
         from utilities.rby_trading import RBYTrading as TradeClass
     elif gen == 2:
         from utilities.gsc_trading import GSCTrading as TradeClass
+    elif gen == 3:
+        from utilities.rse_sp_trading import RSESPTrading as TradeClass
     else:
         raise RuntimeError(f"unsupported generation: {gen}")
 
@@ -100,7 +112,7 @@ def build_trader(link, verbose=True, sanity=True, gen=1):
         connection,
         menu,
         kill_function=lambda: None,
-        pre_sleep=False,
+        pre_sleep=(gen == 3),
     )
     trader._pico_gen = gen
     return trader
@@ -134,8 +146,11 @@ def load_base_partner(trader):
 
 # --- inject (vault -> cartridge) ---------------------------------------------
 
-# Minimum vault-record length per gen: struct + OT name + nickname.
-_MIN_RECORD_LEN = {1: 0x2C + 2 * 0x0B, 2: 0x30 + 2 * 0x0B}  # 66 (RBY), 70 (GSC)
+# Minimum vault-record length per gen. Gens 1/2: struct + OT name + nickname.
+# Gen 3: a bare .pk3 is the 100-byte party struct (names inside); the full
+# engine record appends mail (36) + version info (2) + ribbon info (11) = 149.
+_MIN_RECORD_LEN = {1: 0x2C + 2 * 0x0B, 2: 0x30 + 2 * 0x0B, 3: 100}
+_GEN3_FULL_RECORD_LEN = 149
 
 
 def build_inject_party(trader, record_bytes):
@@ -146,7 +161,9 @@ def build_inject_party(trader, record_bytes):
     Start from base.bin's valid 1-mon party and replace the single Pokémon.
     """
     gen = getattr(trader, "_pico_gen", 1)
-    if gen == 2:
+    if gen == 3:
+        from utilities.rse_sp_trading_data_utils import RSESPTradingPokémonInfo as MonClass
+    elif gen == 2:
         from utilities.gsc_trading_data_utils import GSCTradingPokémonInfo as MonClass
     else:
         from utilities.rby_trading_data_utils import RBYTradingPokémonInfo as MonClass
@@ -157,23 +174,40 @@ def build_inject_party(trader, record_bytes):
             f"Vault record is {len(rec)} bytes; expected >= {_MIN_RECORD_LEN[gen]} "
             f"for Gen {gen}. Was it made by this tool (matching --gen)?"
         )
+    if gen == 3 and len(rec) < _GEN3_FULL_RECORD_LEN:
+        # A bare 100-byte .pk3: pad empty mail + version + ribbon info (the
+        # capture JSON's raw_record_hex carries the lossless 149-byte form).
+        rec = rec + [0] * (_GEN3_FULL_RECORD_LEN - len(rec))
 
-    party = load_base_partner(trader)            # valid 1-mon party for this gen
     mon = MonClass.set_data(rec)                 # rebuild our mon (gen's layout)
-    party.pokemon[0] = mon
+    if gen == 3:
+        # Gen 3's base.bin is a scaffold whose mon slots are intentionally
+        # blank; the engine's own pool path appends the real mon object
+        # (create_trading_data rebuilds the section from party.pokemon).
+        from utilities.gsc_trading_data_utils import GSCUtilsMisc
+        party = trader.party_reader(
+            list(GSCUtilsMisc.read_data(_base_party_bin(gen))), do_full=False)
+        party.pokemon.append(mon)
+    else:
+        party = load_base_partner(trader)        # valid 1-mon party for this gen
+        party.pokemon[0] = mon
     party.party_info.total = 1
-    party.party_info.actual_mons[0] = mon.get_species()
+    # Gens 1/2 keep a species list beside the count; Gen 3's set_id is a no-op
+    # (the species lives inside each mon struct), so this is safe for all gens.
+    party.party_info.set_id(0, mon.get_species())
     return party
 
 
 def local_inject_commit(trader):
-    """Drive the Gen 1 trade-commit handshake directly with the cartridge,
-    with no remote peer: we always offer our mon (party index 0) and always
-    accept. Mirrors GSCTrading.do_trade's device-facing byte sequence.
+    """Drive the trade-commit handshake directly with the cartridge, with no
+    remote peer: we always offer our mon (party index 0) and always accept.
+    Mirrors do_trade's device-facing byte sequence for that generation.
 
     Returns (committed: bool, given_up_index: int|None) where given_up_index is
     the cartridge's party slot it traded away (so the caller can vault it).
     """
+    if getattr(trader, "_pico_gen", 1) == 3:
+        return _local_inject_commit_gen3(trader)
     limit = trader.resends_limit_trade
 
     # 1. Read the cartridge's chosen Pokémon (0x60 + index), or a cancel.
@@ -210,3 +244,41 @@ def local_inject_commit(trader):
         trader.wait_for_no_input(nxt)
 
     return True, given_up_index
+
+
+def _local_inject_commit_gen3(trader):
+    """Gen 3 flavor of the local commit, mirroring RSESPTrading.do_trade's
+    device-facing sequence: values are 24-bit (command byte << 16 | payload),
+    there are two accept rounds and seven success rounds, and every value we
+    send is repeated option_confirmation_threshold+1 times."""
+    send = trader.send_data_multiple_times
+
+    # 1. The device's chosen Pokémon ((0x80+index) << 16 | species), or stop.
+    sent_mon = trader.wait_for_choice(0)
+    if trader.is_choice_stop(sent_mon):
+        return False, None
+    given_up_index = trader.convert_choice(sent_mon)
+
+    # 2. Offer our mon: party slot 0 (the species rides in the low bits).
+    # After the starting sequence, other_pokemon is the party WE sent in, so
+    # the engine's get_first_mon() builds exactly this choice value.
+    send(trader.swap_trade_offer_data_pure, trader.get_first_mon())
+
+    # 3. Two accept/decline rounds; we always accept.
+    for i in range(2):
+        accepted = trader.wait_for_accept_decline(0, i)
+        if trader.is_choice_decline(accepted, i):
+            trader.end_trade()
+            return False, given_up_index
+        send(trader.swap_trade_raw_data_pure, trader.accept_trade[i] << 16)
+
+    # 4. Seven success rounds commit the swap.
+    failed = False
+    for i in range(7):
+        success_result = trader.wait_for_success(0, i)
+        failed = failed or trader.has_failed(success_result)
+        send(trader.swap_trade_raw_data_pure, trader.success_trade[i] << 16)
+
+    trader.exit_or_new = True
+    trader.reset_trade()
+    return (not failed), given_up_index

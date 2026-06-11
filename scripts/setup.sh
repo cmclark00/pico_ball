@@ -43,6 +43,38 @@ else
 fi
 echo "    ready: $(ls "$ENGINE_DIR/utilities/rby_trading.py" >/dev/null 2>&1 && echo OK || echo MISSING)"
 
+# --- Gen 3 (GBA) support artifacts -------------------------------------------
+# Gen 3 games trade through Lorenzooone's Gen3-to-GenX program, multibooted into
+# the GBA's RAM over the link cable. The adapter must run the reconfigurable
+# firmware (4-byte SIO32 transfers). Both are pinned prebuilt releases, fetched
+# here rather than redistributed (third_party/ is gitignored).
+GEN3_DIR="third_party/gen3"
+GEN3_MB_URL="https://github.com/Lorenzooone/Pokemon-Gen3-to-Gen-X/releases/download/1.1.14/pokemon_gen3_to_genx_mb.zip"
+GEN3_FW_URL="https://github.com/Lorenzooone/gb-link-firmware-reconfigurable/releases/download/1.0.2/gbusb.uf2"
+
+echo "==> Gen 3 artifacts ($GEN3_DIR)"
+mkdir -p "$GEN3_DIR"
+if [ ! -f "$GEN3_DIR/pokemon_gen3_to_genx_mb.gba" ]; then
+  curl -fsSL -o "$GEN3_DIR/mb.zip" "$GEN3_MB_URL"
+  python3 -c "
+import zipfile, sys
+with zipfile.ZipFile('$GEN3_DIR/mb.zip') as z:
+    names = [n for n in z.namelist() if n.endswith('.gba')]
+    assert names, 'no .gba in multiboot zip'
+    open('$GEN3_DIR/pokemon_gen3_to_genx_mb.gba', 'wb').write(z.read(names[0]))
+"
+  rm -f "$GEN3_DIR/mb.zip"
+  echo "    fetched pokemon_gen3_to_genx_mb.gba (Gen3-to-GenX 1.1.14)"
+else
+  echo "    pokemon_gen3_to_genx_mb.gba already present"
+fi
+if [ ! -f "$GEN3_DIR/gbusb_reconfigurable.uf2" ]; then
+  curl -fsSL -o "$GEN3_DIR/gbusb_reconfigurable.uf2" "$GEN3_FW_URL"
+  echo "    fetched gbusb_reconfigurable.uf2 (gb-link-firmware-reconfigurable 1.0.2)"
+else
+  echo "    gbusb_reconfigurable.uf2 already present"
+fi
+
 cat <<'EOF'
 
 ==> Done.

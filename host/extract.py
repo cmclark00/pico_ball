@@ -9,6 +9,8 @@ cartridge keeps every Pokémon.
 Usage:
     python host/extract.py                # capture party -> vault/ (Gen 1)
     python host/extract.py --gen 2        # Gold/Silver/Crystal (Gen 2)
+    python host/extract.py --gen 3        # Ruby/Sapphire/Emerald/FR/LG
+                                          #   (multiboot first: host/gen3_boot.py)
     python host/extract.py --selftest     # just open the board (no Game Boy)
     python host/extract.py --no-sanity    # capture raw bytes without cleaning
     python host/extract.py --out PATH     # vault directory (default: ./vault)
@@ -42,6 +44,13 @@ def capture(vault_dir, verbose, sanity, gen):
     link = UsbLink()
     link.open()
     try:
+        if gen == 3 and not link.configure(4):
+            print("Gen 3 needs the reconfigurable firmware (4-byte SIO32 "
+                  "transfers).\nFlash third_party/gen3/gbusb_reconfigurable.uf2 "
+                  "and multiboot first:\n  python host/gen3_boot.py",
+                  file=sys.stderr)
+            return 1
+
         # The engine uses relative paths to its own data files.
         with engine.engine_cwd():
             trader = engine.build_trader(link, verbose=verbose, sanity=sanity, gen=gen)
@@ -49,46 +58,63 @@ def capture(vault_dir, verbose, sanity, gen):
             partner = engine.load_base_partner(trader)
             send_data = partner.create_trading_data(trader.special_sections_len)
 
-            print(
-                "\nIn the game: go to a Pokémon Center -> upstairs -> Cable Club\n"
-                "-> TRADE CENTER, walk to the table and interact. Then select your\n"
-                "first Pokémon when prompted. (Nothing will actually be traded.)\n"
-            )
+            if gen == 3:
+                print(
+                    "\nOn the GBA: Gen3-to-GenX must be running (python "
+                    "host/gen3_boot.py)\nwith the Gen 3 cartridge inserted. "
+                    "Select its Gen 3 trade option.\n"
+                )
+                # No Cable Club dance: the multibooted program is the peer.
+                # The exchange fills trader.own_pokemon with the cart's party.
+                trader.trade_starting_sequence(True, send_data=send_data)
+                cart_party = trader.own_pokemon
+            else:
+                print(
+                    "\nIn the game: go to a Pokémon Center -> upstairs -> Cable Club\n"
+                    "-> TRADE CENTER, walk to the table and interact. Then select your\n"
+                    "first Pokémon when prompted. (Nothing will actually be traded.)\n"
+                )
 
-            trader.enter_room()
-            if not trader.sit_to_table():
-                print("Didn't reach the trade table (you stood up, or the link "
-                      "dropped). Try again.")
-                return 1
+                trader.enter_room()
+                if not trader.sit_to_table():
+                    print("Didn't reach the trade table (you stood up, or the link "
+                          "dropped). Try again.")
+                    return 1
 
-            # Buffered, fully-local exchange of the three trade sections.
-            data, _data_other = trader.trade_starting_sequence(
-                True, send_data=send_data
-            )
-            cart_party = trader.party_reader(data[1], data_mail=data[2])
+                # Buffered, fully-local exchange of the three trade sections.
+                data, _data_other = trader.trade_starting_sequence(
+                    True, send_data=send_data
+                )
+                cart_party = trader.party_reader(data[1], data_mail=data[2])
 
             # Save BEFORE doing anything that could commit a trade.
             written = savedata.save_party(cart_party, vault_dir, engine.ENGINE_DIR, gen=gen)
 
             # Cancel: signal stop_trade and let the player back out in-game.
-            _cancel(trader)
+            _cancel(trader, gen)
 
+        ext = ".pk3" if gen == 3 else ".pk1"
         print(f"\nCaptured {len(written)} Pokémon into {vault_dir}:")
         for stem, info in written:
             lvl = info.get("level")
             nick = info.get("nickname") or info.get("species_name")
-            print(f"  - {info['species_name']:<12} Lv{lvl}  '{nick}'  -> {stem}.pk1")
+            print(f"  - {info['species_name']:<12} Lv{lvl}  '{nick}'  -> {stem}{ext}")
         print("\nYour cartridge is unchanged. Press B in-game to leave the table.")
         return 0
     finally:
         link.close()
 
 
-def _cancel(trader):
-    """Send the Gen 1 stop/cancel byte so the game backs out of the trade."""
+def _cancel(trader, gen=1):
+    """Back out of the trade without committing anything."""
     try:
-        for _ in range(64):
-            trader.swap_byte(trader.stop_trade)
+        if gen == 3:
+            # The engine's own "force the trade menu closed" sequence: keep
+            # sending cancel until the device acks with stop, then send stop.
+            trader.end_trade()
+        else:
+            for _ in range(64):
+                trader.swap_byte(trader.stop_trade)
     except Exception:  # noqa: BLE001 - cancelling is best-effort
         pass
 
@@ -104,8 +130,10 @@ def main():
                     help="capture raw bytes without the engine's sanity cleaning")
     ap.add_argument("-q", "--quiet", dest="verbose", action="store_false",
                     help="less engine logging")
-    ap.add_argument("--gen", type=int, choices=(1, 2), default=1,
-                    help="game generation: 1 = Red/Blue/Yellow, 2 = Gold/Silver/Crystal")
+    ap.add_argument("--gen", type=int, choices=(1, 2, 3), default=1,
+                    help="game generation: 1 = R/B/Y, 2 = G/S/C, "
+                         "3 = Ruby/Sapphire/Emerald/FR/LG (multiboot first: "
+                         "python host/gen3_boot.py)")
     args = ap.parse_args()
 
     try:
