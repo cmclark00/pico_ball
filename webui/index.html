@@ -91,6 +91,7 @@
   <select id="gen" title="Generation for capture">
     <option value="1">Gen 1 (R/B/Y)</option>
     <option value="2">Gen 2 (G/S/C)</option>
+    <option value="3">Gen 3 (R/S/E/FR/LG)</option>
   </select>
   <button id="capture" disabled>Capture now</button>
   <button id="refresh" disabled>Refresh</button>
@@ -120,8 +121,19 @@
 <script src="pokedata.js"></script>
 <script src="pokedata_gen3.js"></script>
 <script src="decode.js"></script>
+<!-- Gen 3 path (WebUSB + multiboot). Attaches window.PicoGen3 for the app below. -->
+<script type="module" src="gen3.js"
+        onerror="window.__gen3LoadError='gen3.js failed to load (404 or blocked). Serve over http://localhost — modules don\'t load from file://.'"></script>
 <script>
 "use strict";
+// Surface any module load/eval failure so the Gen 3 button can explain itself.
+window.addEventListener("error", (e) => {
+  const src = e.filename || "";
+  if (/gen3\.js|usb_link\.js|multiboot\.js/.test(src) || e.message)
+    window.__gen3LoadError = window.__gen3LoadError ||
+      ("Gen 3 module error: " + (e.message || "load failed") +
+       (src ? " (" + src.split("/").pop() + ")" : ""));
+}, true);
 
 // --- downloads ---------------------------------------------------------------
 function esc(s) { return String(s).replace(/[^A-Za-z0-9._-]/g, "_") || "mon"; }
@@ -269,6 +281,14 @@ function render(entries) {
 
 // --- Web Serial transport ----------------------------------------------------
 let port = null;
+// One long-lived reader pumps bytes into a line queue for the lifetime of the
+// connection. Grabbing a fresh reader per command (and releasing it only after a
+// blocking read) used to leave port.readable locked when a read out-lived its
+// timeout — the next command then threw "getReader ... already locked".
+let reader = null;
+let readerPump = null;       // the running pump promise
+let lineQueue = [];          // complete lines decoded but not yet consumed
+let lineWaiter = null;       // resolver for a sendCommand awaiting the next line
 const statusEl = document.getElementById("status");
 function setStatus(t) { statusEl.textContent = t; }
 
@@ -290,37 +310,69 @@ async function connect() {
   // pico_stdio_usb only sends once DTR is asserted; Web Serial doesn't by default.
   try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
   await new Promise(r => setTimeout(r, 200));  // let the CDC settle
+  startReader();
   setStatus("Connected");
   setControls(true);
   await dump();
 }
 
+// Continuously drain the port into complete lines. Runs once per connection;
+// every sendCommand consumes from the queue it fills, so the readable stream is
+// locked exactly once and never contended.
+function startReader() {
+  reader = port.readable.getReader();
+  lineQueue = [];
+  lineWaiter = null;
+  const decoder = new TextDecoder();
+  let buf = "";
+  readerPump = (async () => {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (lineWaiter) { const w = lineWaiter; lineWaiter = null; w(line); }
+          else lineQueue.push(line);
+        }
+      }
+    } catch (e) { /* reader cancelled on disconnect */ }
+  })();
+}
+
+async function stopReader() {
+  if (!reader) return;
+  try { await reader.cancel(); } catch (e) {}
+  try { reader.releaseLock(); } catch (e) {}
+  try { await readerPump; } catch (e) {}
+  reader = null; readerPump = null; lineQueue = []; lineWaiter = null;
+}
+
+// Resolve with the next complete line, or null if `timeoutMs` elapses first.
+function nextLine(timeoutMs) {
+  if (lineQueue.length) return Promise.resolve(lineQueue.shift());
+  return new Promise(resolve => {
+    const timer = setTimeout(() => { lineWaiter = null; resolve(null); }, timeoutMs);
+    lineWaiter = (line) => { clearTimeout(timer); resolve(line); };
+  });
+}
+
 // Write a command and read text lines until doneFn(line) or timeout.
-// onLine(line) is called for every line. Returns when done.
+// onLine(line) is called for every line. Returns when done (or timed out).
 async function sendCommand(payload, doneFn, timeoutMs, onLine) {
   const writer = port.writable.getWriter();
   await writer.write(new TextEncoder().encode(payload));
   writer.releaseLock();
 
-  const reader = port.readable.getReader();
-  const decoder = new TextDecoder();
-  let buf = "", done = false;
   const deadline = Date.now() + timeoutMs;
-  try {
-    while (!done && Date.now() < deadline) {
-      const { value, done: rdDone } = await reader.read();
-      if (rdDone) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (onLine) onLine(line);
-        if (doneFn(line)) { done = true; break; }
-      }
-    }
-  } finally {
-    reader.releaseLock();
+  while (Date.now() < deadline) {
+    const line = await nextLine(deadline - Date.now());
+    if (line === null) break;   // timed out
+    if (onLine) onLine(line);
+    if (doneFn(line)) return;
   }
 }
 
@@ -352,7 +404,8 @@ async function dump() {
 }
 
 function captureNow() {
-  const gen = document.getElementById("gen").value;  // "1" or "2"
+  const gen = document.getElementById("gen").value;  // "1", "2" or "3"
+  if (gen === "3") return captureGen3();
   return withBusy(`Capturing (Gen ${gen})… sit at the Trade Center table and pick a Pokémon`, async () => {
     await sendCommand(gen, l => l.startsWith("GEN"), 3000);  // select generation
     let result = "";
@@ -361,6 +414,52 @@ function captureNow() {
     setStatus(result.includes(" ok ") ? "Captured!" : "Capture: " + result);
     await dump();
   });
+}
+
+// Gen 3 runs over WebUSB (reconfigurable firmware + multiboot), independent of
+// the Web Serial vault connection used by gens 1/2. See gen3.js.
+function captureGen3() {
+  if (!window.PicoGen3) {
+    setStatus(window.__gen3LoadError ||
+      "Gen 3 module not loaded — serve over http://localhost (not file://) and " +
+      "check the DevTools console for a gen3.js/usb_link.js/multiboot.js error.");
+    return;
+  }
+  return withBusy("Gen 3: connecting over WebUSB…", async () => {
+    try {
+      const records = await window.PicoGen3.capture(setStatus);
+      if (records && records.length) {
+        showCapturedGen3(records);
+        setStatus(`Captured ${records.length} Gen 3 Pokémon`);
+      }
+    } catch (e) {
+      console.error("Gen 3 capture failed:", e);
+      setStatus("Gen 3: " + (e && e.message ? e.message : e));
+    }
+  });
+}
+
+// Render captured Gen 3 mons (100-byte .pk3 records) as cards, reusing the same
+// decode + card path as dropped vault files.
+function showCapturedGen3(records) {
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  let n = 0;
+  for (const rec of records) {
+    try {
+      const mon = decodeMonRecord(rec, 3);
+      if (mon) { grid.appendChild(card(mon, -1)); n++; }
+    } catch (e) { console.warn("Failed to decode a captured Gen 3 record", e); }
+  }
+  const out = document.getElementById("filecards");
+  out.innerHTML = "";
+  if (n) {
+    const sec = document.createElement("div");
+    sec.className = "records";
+    sec.innerHTML = `<div class="cap-head"><h2 class="grow">Gen 3 capture — ${n} Pokémon</h2></div>`;
+    sec.appendChild(grid);
+    out.appendChild(sec);
+  }
 }
 
 function injectRecord(i) {
@@ -394,6 +493,25 @@ document.getElementById("refresh").addEventListener("click", () =>
   withBusy("Reading…", dump));
 document.getElementById("capture").addEventListener("click", captureNow);
 document.getElementById("wipe").addEventListener("click", wipeAll);
+
+// Gen 3 capture goes over WebUSB and needs no serial connection, so allow the
+// Capture button when Gen 3 is selected even before "Connect device".
+document.getElementById("gen").addEventListener("change", (e) => {
+  const cap = document.getElementById("capture");
+  if (e.target.value === "3") cap.disabled = busy;
+  else setControls(!!port);
+});
+
+// Release the reader if the board is unplugged so a reconnect starts clean.
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("disconnect", async (e) => {
+    if (port && e.target === port) {
+      await stopReader();
+      try { await port.close(); } catch (_) {}
+      port = null; setControls(false); setStatus("Disconnected");
+    }
+  });
+}
 
 // --- vault-file viewer (drag & drop / file picker) -----------------------------
 // Gen is inferred from the record length: 66 = Gen 1; 70/117 = Gen 2;

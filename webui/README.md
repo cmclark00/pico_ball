@@ -51,6 +51,32 @@ With the latest firmware flashed, the header/​capture controls drive the devic
 - **Delete** (per capture) — erases that record's flash slot.
 - **Wipe all** — erases the whole vault (with a confirm).
 
+### Gen 3 (R/S/E/FR/LG) — WebUSB, not Web Serial
+Gen 3 can't go through the on-device vault firmware (it needs 4-byte SIO32
+transfers and the GBA must run the **Gen3-to-GenX** homebrew, multibooted into
+RAM). So selecting **Gen 3** in the dropdown switches the page to a **WebUSB**
+path that mirrors `host/extract.py --gen 3` entirely in the browser:
+
+1. Flash the board with the **reconfigurable firmware**
+   (`third_party/gen3/gbusb_reconfigurable.uf2`, fetched by `scripts/setup.sh`).
+2. Power the GBA **on at the BIOS/boot screen** (no game running), cartridge
+   inserted, link cable connected.
+3. Pick **Gen 3** and click **Capture now** → the page asks for the USB device,
+   configures the SIO32 link, and **multiboots** the homebrew into the GBA.
+4. When prompted, on the GBA open Gen3-to-GenX → the Gen 3 trade option and
+   advance to the trade screen, then click **OK**. The page runs the trade-partner
+   exchange, reads your party, and shows the Pokémon (and `.pk3` downloads).
+
+The page loads the ~248 KB multiboot image (`pokemon_gen3_to_genx_mb.gba`) from
+`webui/` (copied there by `scripts/setup.sh`); if missing it falls back to
+`third_party/gen3/…` or a file picker.
+
+> **How it works:** mirrors `host/extract.py --gen 3` entirely in the browser —
+> `usb_link.js` (WebUSB), `multiboot.js`, then `gen3_trade.js` (a port of the
+> capture path of `utilities/rse_sp_trading.py`: the buffered 896-byte section
+> exchange). The captured 100-byte structs are the same `.pk3` records the Python
+> tool writes, decoded by `pokedata_gen3.js`.
+
 These use simple serial commands (`a` capture, `r<n>` delete, `w` wipe); the
 firmware prints machine-readable markers (`CAPTURE_RESULT …`, `DELETED …`,
 `WIPED …`) that the page waits on.
@@ -62,6 +88,11 @@ firmware prints machine-readable markers (`CAPTURE_RESULT …`, `DELETED …`,
 | `index.html` | UI + Web Serial transport + rendering |
 | `decode.js` | Gen 1 record decoder (shared with the Node test) |
 | `pokedata.js` | species + move name tables (generated) |
+| `usb_link.js` | WebUSB transport for the Gen 3 reconfigurable firmware |
+| `multiboot.js` | GBA multiboot (port of `multiboot.py`) for Gen 3 |
+| `gen3_trade.js` | Gen 3 trade-partner capture (port of `rse_sp_trading.py`) |
+| `gen3_partner.js` | Baked throwaway partner party (gen `tools/gen_gen3_partner.py`) |
+| `gen3.js` | Gen 3 flow: WebUSB → configure(4) → multiboot → capture |
 
 Regenerate the data tables (only if the engine's name files change):
 
@@ -88,6 +119,7 @@ real capture (your Path A party) under Node:
 - **No data after Connect?** The firmware only emits once DTR is asserted; the page
   does this automatically (`setSignals`). If your terminal app grabbed the port,
   close it first — only one app can hold the serial port.
-- **Want WebUSB instead of Web Serial?** Not needed here — the firmware's CDC is
-  simpler and already does the job. (A WebUSB build would require adding a vendor
-  interface to the firmware, like the Path A bridge.)
+- **Web Serial vs WebUSB.** Gens 1/2 use the vault firmware's **CDC (Web Serial)**
+  — simplest, and it already does the on-device capture. **Gen 3** uses the
+  reconfigurable firmware's vendor interface over **WebUSB** (`usb_link.js`),
+  because it needs SIO32 + multiboot. The two paths coexist; the dropdown picks.

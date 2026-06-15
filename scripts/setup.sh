@@ -75,6 +75,11 @@ else
   echo "    gbusb_reconfigurable.uf2 already present"
 fi
 
+# The WebUI's Gen 3 path multiboots this image via WebUSB, so it must be servable
+# from webui/. Copy it there (gitignored, like third_party/ — not redistributed).
+cp -f "$GEN3_DIR/pokemon_gen3_to_genx_mb.gba" webui/pokemon_gen3_to_genx_mb.gba
+echo "    copied multiboot image to webui/ (for the WebUI Gen 3 path)"
+
 cat <<'EOF'
 
 ==> Done.
