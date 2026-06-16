@@ -145,11 +145,15 @@ static bool read_section(const uint8_t *send_data, uint8_t *buf) {
     uint32_t other_pos = 0, other_end = 0, next = 0;
     int since_last_useful = SINCE_LAST_USEFUL_LIMIT;
     bool transfer_successful = false, has_all_data = false;
-    uint32_t guard = 0;
-    const uint32_t GUARD_MAX = 3000000u;
+    // Wall-clock timeout so a stalled exchange (e.g. GBA not on the trade screen)
+    // returns cleanly instead of spinning — independent of the per-word pacing.
+    absolute_time_t deadline = make_timeout_time_ms(30000);
 
     while (!transfer_successful) {
-        if (++guard > GUARD_MAX) { printf("G3T: trade timed out (GBA on trade screen?)\n"); return false; }
+        if (time_reached(deadline)) {
+            printf("G3T: trade timed out (is the GBA on the Gen3-to-GenX trade screen?)\n");
+            return false;
+        }
         setup_t r;
         if (since_last_useful >= SINCE_LAST_USEFUL_LIMIT && !has_all_data) {
             int s, e; find_uncompleted_range(completed, SECTION_HALF, &s, &e);
