@@ -80,6 +80,11 @@ fi
 cp -f "$GEN3_DIR/pokemon_gen3_to_genx_mb.gba" webui/pokemon_gen3_to_genx_mb.gba
 echo "    copied multiboot image to webui/ (for the WebUI Gen 3 path)"
 
+# Bake the image into a C array for the standalone firmware's on-device multiboot
+# (also gitignored — generated from the non-redistributed homebrew).
+python3 tools/gen_baked_gen3.py >/dev/null && \
+  echo "    generated firmware baked_gen3_mb.c (standalone Gen 3 multiboot)"
+
 cat <<'EOF'
 
 ==> Done.

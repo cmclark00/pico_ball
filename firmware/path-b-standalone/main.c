@@ -25,6 +25,8 @@
 #include "gen_profile.h"
 #include "storage.h"
 #include "ui.h"
+#include "gen3_multiboot.h"
+#include "gen3_trade.h"
 
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
@@ -204,6 +206,38 @@ static void handle_serial(void) {
         }
         case '1': current_gen = 1; printf("GEN 1\n"); show_idle(); break;
         case '2': current_gen = 2; printf("GEN 2\n"); show_idle(); break;
+        case 'm': {  // Gen 3 standalone multiboot bring-up test (no PC uploader)
+            int pace = read_uint();          // optional: 'm 100' sets word pacing
+            if (pace < 0) pace = 100;        // 100us: validated on hardware (36 was too fast)
+            printf("MB: starting (GBA must be at BIOS/boot screen), pacing=%dus...\n", pace);
+            gb_link_set_gen3(true);
+            bool ok = gen3_multiboot((uint32_t)pace);
+            gb_link_set_gen3(false);
+            printf("MB_RESULT %s\n", ok ? "ok" : "fail");
+            show_idle();
+            break;
+        }
+        case 't': {  // Gen 3 standalone trade capture test (GBA on the trade screen)
+            int pace = read_uint();          // optional: 't 600' sets word pacing
+            if (pace < 0) pace = 1000;
+            printf("G3T: capturing (GBA on Gen3-to-GenX trade screen), pacing=%dus...\n", pace);
+            gb_link_set_gen3(true);
+            static uint8_t recs[6][GEN3_PK3_LEN];
+            int n = gen3_capture_party((uint32_t)pace, recs, 6);
+            gb_link_set_gen3(false);
+            if (n < 0) {
+                printf("G3T_RESULT fail\n");
+            } else {
+                for (int i = 0; i < n; i++) {
+                    printf("MON3 %d ", i);
+                    for (int b = 0; b < GEN3_PK3_LEN; b++) printf("%02x", recs[i][b]);
+                    printf("\n");
+                }
+                printf("G3T_RESULT ok %d\n", n);
+            }
+            show_idle();
+            break;
+        }
         case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
         case 'r': {
             int n = read_uint();
