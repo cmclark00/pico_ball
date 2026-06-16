@@ -47,6 +47,9 @@ jobs:
       - name: Init TinyUSB submodule
         run: git -C pico-sdk submodule update --init --depth 1 lib/tinyusb
 
+      - name: Generate baked multiboot source
+        run: ./scripts/setup.sh
+
       - name: Configure & build
         run: |
           cmake -S firmware/path-b-standalone -B firmware/path-b-standalone/build \
