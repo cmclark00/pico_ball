@@ -36,6 +36,11 @@ static inline uint32_t u32le(const uint8_t *b, uint32_t p) {
            ((uint32_t)b[p + 2] << 16) | ((uint32_t)b[p + 3] << 24);
 }
 
+static inline void wr32le(uint8_t *b, uint32_t p, uint32_t v) {
+    b[p] = v & 0xFF; b[p + 1] = (v >> 8) & 0xFF;
+    b[p + 2] = (v >> 16) & 0xFF; b[p + 3] = (v >> 24) & 0xFF;
+}
+
 static inline uint32_t swap_word(uint32_t out) {
     uint32_t r = gb_link_swap32(out);
     busy_wait_us(g_pace);
@@ -235,4 +240,124 @@ int gen3_capture_party(uint32_t pacing_us, uint8_t records[][GEN3_PK3_LEN], int 
         memcpy(records[i], buf + TRADING_POKEMON_POS + i * GEN3_PK3_LEN, GEN3_PK3_LEN);
     end_trade();
     return (int)count;
+}
+
+// --- Gen 3 injection (vault -> cartridge) ------------------------------------
+// We present a one-mon party (our stored .pk3) and run the trade-commit handshake
+// from RSESPTrading.do_trade / engine.local_inject_commit_gen3: the GBA side picks
+// a mon to give us, we always offer our slot 0, accept both rounds, ack all seven
+// success rounds. The mon the cart gives back is returned so the caller can vault
+// it (the cartridge itself is unchanged by this side; the user commits in-game).
+#define TRADE_OFFER_START 0x80
+#define FIRST_TRADE_INDEX ((uint32_t)TRADE_OFFER_START << 16)
+#define FAILED_TRADE 0x9F
+static const uint8_t accept_trade[2]  = {0xA2, 0xB2};
+static const uint8_t decline_trade[2] = {0xA1, 0xB1};
+static const uint8_t success_trade[7] = {0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x9C};
+
+// Write the three section checksums (RSESPTradingData.generate_checksum).
+static void generate_checksums(uint8_t *buf) {
+    uint32_t c = 0;
+    for (int i = 0; i < TRADING_PARTY_MAX; i++)
+        for (int j = 0; j < TRADING_MAIL_LENGTH / 4; j++)
+            c += u32le(buf, i * TRADING_MAIL_LENGTH + j * 4 + TRADING_MAIL_POS);
+    wr32le(buf, TRADING_MAIL_POS + TRADING_PARTY_MAX * TRADING_MAIL_LENGTH, c);
+
+    c = u32le(buf, TRADING_PARTY_INFO_POS);
+    for (int i = 0; i < TRADING_PARTY_MAX; i++)
+        for (int j = 0; j < GEN3_PK3_LEN / 4; j++)
+            c += u32le(buf, i * GEN3_PK3_LEN + j * 4 + TRADING_POKEMON_POS);
+    wr32le(buf, TRADING_POKEMON_POS + TRADING_PARTY_MAX * GEN3_PK3_LEN, c);
+
+    c = 0;
+    for (int i = 0; i < (SECTION_LEN - 4) / 4; i++) c += u32le(buf, i * 4);
+    wr32le(buf, SECTION_LEN - 4, c);
+}
+
+// One trade-menu poll (swap_trade_data_dump): returns the 24-bit menu value, or
+// -1 if the device's control byte didn't match.
+static int32_t swap_trade_dump(void) {
+    uint32_t recv = swap_word((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24);
+    if (((recv >> 24) & 0xFF) != (IN_PARTY_FLAG | DONE_FLAG)) return -1;
+    return (int32_t)(recv & 0xFFFFFF);
+}
+
+// Poll until the same in-set value is read option_confirmation_threshold times
+// (wait_for_set_of_values). `vals` are command bytes compared to (value>>16).
+// Returns the value, or 0 on timeout.
+static uint32_t wait_for_values(const uint8_t *vals, int n, absolute_time_t dl) {
+    int consec = 0; int32_t found = -1, cur = 0;
+    while (consec < OPTION_CONFIRM_THRESHOLD) {
+        if (time_reached(dl)) return 0;
+        cur = swap_trade_dump();
+        bool ok = false;
+        if (cur >= 0) {
+            uint32_t cmd = ((uint32_t)cur >> 16) & 0xFF;
+            for (int i = 0; i < n; i++) if (vals[i] == cmd) { ok = (cur == found); break; }
+        }
+        consec = ok ? consec + 1 : 0;
+        found = cur;
+    }
+    return (uint32_t)cur;
+}
+
+static void send_value_repeated(uint32_t value) {
+    for (int k = 0; k <= OPTION_CONFIRM_THRESHOLD; k++)
+        swap_word(((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24) | value);
+}
+
+// Returns 1 = committed (*given_up = cart slot it gave us), 0 = declined/stopped,
+// -1 = failed/timed out.
+static int commit_inject(uint16_t our_species, int *given_up) {
+    absolute_time_t dl = make_timeout_time_ms(60000);
+    const uint8_t idx_vals[7] = {0x80, 0x81, 0x82, 0x83, 0x84, 0x85, TRADE_CANCEL};
+    uint32_t sent = wait_for_values(idx_vals, 7, dl);
+    if (sent == 0) return -1;
+    uint32_t cmd = (sent >> 16) & 0xFF;
+    if (cmd == TRADE_CANCEL) return 0;
+    *given_up = (int)(cmd - TRADE_OFFER_START);
+
+    // Offer our mon (party slot 0): the species rides in the low bits.
+    send_value_repeated(FIRST_TRADE_INDEX | our_species);
+
+    for (int i = 0; i < 2; i++) {
+        const uint8_t av[2] = {accept_trade[i], decline_trade[i]};
+        uint32_t a = wait_for_values(av, 2, dl);
+        if (a == 0) return -1;
+        if (((a >> 16) & 0xFF) == decline_trade[i]) { end_trade(); return 0; }
+        send_value_repeated((uint32_t)accept_trade[i] << 16);
+    }
+
+    bool failed = false;
+    for (int i = 0; i < 7; i++) {
+        const uint8_t sv[2] = {success_trade[i], FAILED_TRADE};
+        uint32_t s = wait_for_values(sv, 2, dl);
+        if (s == 0) return -1;
+        if (((s >> 16) & 0xFF) == FAILED_TRADE) failed = true;
+        send_value_repeated((uint32_t)success_trade[i] << 16);
+    }
+    return failed ? -1 : 1;
+}
+
+int gen3_inject_mon(uint32_t pacing_us, const uint8_t *pk3, uint16_t our_species,
+                    uint8_t received[GEN3_PK3_LEN], uint16_t *recv_species) {
+    g_pace = pacing_us;
+    // Build the one-mon inject section: our mon at slot 0, party size 1, checksums.
+    static uint8_t section[SECTION_LEN];
+    memcpy(section, baked_party_gen3, SECTION_LEN);
+    memcpy(section + TRADING_POKEMON_POS, pk3, GEN3_PK3_LEN);
+    wr32le(section, TRADING_PARTY_INFO_POS, 1);
+    generate_checksums(section);
+
+    static uint8_t buf[SECTION_LEN];        // the cartridge's party
+    if (!read_section(section, buf)) return -1;
+
+    int given_up = -1;
+    int r = commit_inject(our_species, &given_up);
+    if (r != 1) return r;                   // 0 = declined/stop, -1 = fail
+    if (given_up >= 0 && given_up < TRADING_PARTY_MAX) {
+        memcpy(received, buf + TRADING_POKEMON_POS + given_up * GEN3_PK3_LEN, GEN3_PK3_LEN);
+        if (recv_species) *recv_species = gen3_species(received);
+    }
+    return 1;
 }

@@ -233,7 +233,7 @@ function card(mon, index) {
     </div>`;
   el.querySelector(".dl-pk1").addEventListener("click", () => downloadPkx(mon));
   if (index >= 0) {
-    el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index));
+    el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index, mon.gen));
     el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
   }
   return el;
@@ -495,13 +495,44 @@ function showCapturedGen3(records) {
   }
 }
 
-function injectRecord(i) {
+function injectRecord(i, gen) {
+  if (gen === 3) return injectRecordGen3(i);
   return withBusy("Injecting… Cable Club → Trade Center → sit at table", async () => {
     let result = "";
     await sendCommand("i" + i + "\n", l => l.startsWith("INJECT_RESULT"), 120000,
                       l => { if (l.startsWith("INJECT_RESULT")) result = l; });
     setStatus(result.includes(" ok") ? "Injected!" : "Inject: " + result);
     await dump();
+  });
+}
+
+// Gen 3 inject over serial: select Gen 3 on the board, multiboot, reach the trade
+// screen, then inject slot i. On the GBA you pick which of YOUR Pokémon to give
+// away; the board gives it the stored one and vaults the one you gave.
+function injectRecordGen3(i) {
+  return withBusy("Gen 3 inject: multibooting the GBA…", async () => {
+    await sendCommand("3", l => l.startsWith("GEN"), 3000);   // target Gen 3 on the board
+    let mb = "";
+    await sendCommand("m\n", l => l.startsWith("MB_RESULT"), 30000, l => {
+      if (l.startsWith("MB_RESULT")) mb = l;
+      else if (l.startsWith("MB:")) setStatus("Gen 3: " + l.slice(3).trim());
+    });
+    if (!mb.includes("ok")) { setStatus("Gen 3 inject: multiboot failed (" + (mb || "no response") + ")"); return; }
+
+    const ok = confirm(
+      "Multiboot done. On the GBA, reach the Gen3-to-GenX trade screen, then OK.\n\n" +
+      "You'll pick which of your cartridge's Pokémon to give away — the board trades " +
+      "it the stored one, and vaults the one you gave (so nothing is lost).");
+    if (!ok) { setStatus("Gen 3 inject: cancelled"); return; }
+
+    setStatus("Gen 3 inject: pick your give-away on the GBA…");
+    let res = "";
+    await sendCommand("i" + i + "\n", l => l.startsWith("INJECT_RESULT"), 120000, l => {
+      if (l.startsWith("INJECT_RESULT")) res = l;
+      else if (l.startsWith("G3I:")) setStatus("Gen 3: " + l.slice(4).trim());
+    });
+    await dump();
+    setStatus("Gen 3 inject: " + (res.replace("INJECT_RESULT ", "").trim() || "no result"));
   });
 }
 

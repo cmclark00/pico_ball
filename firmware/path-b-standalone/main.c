@@ -202,7 +202,41 @@ static void do_capture_gen3(void) {
     else run_gen3_trade(1000);
 }
 
+// Inject a stored Gen 3 mon back into a cartridge. The GBA must already be on the
+// Gen3-to-GenX trade screen (multiboot first). Select your give-away on the GBA;
+// the mon it gives back is vaulted so nothing is lost.
+static void run_gen3_inject(int slot, uint32_t pace) {
+    if (slot < 0) slot = storage_last_written_index();
+    int mon_gen = 0, species = 0;
+    uint16_t len = (slot < 0) ? 0
+        : storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
+    if (len == 0 || mon_gen != 3) {
+        printf("INJECT_RESULT fail: slot %d is not a Gen 3 record\n", slot);
+        ui_error(); sleep_ms(2000); return;
+    }
+    printf("G3I: injecting slot %d (Gen 3 species %d) — pick your give-away on the GBA, "
+           "pacing=%luus...\n", slot, species, (unsigned long)pace);
+    ui_armed();
+    gb_link_set_gen3(true);
+    static uint8_t recv[GEN3_PK3_LEN];
+    uint16_t recv_sp = 0;
+    int r = gen3_inject_mon(pace, record, (uint16_t)species, recv, &recv_sp);
+    gb_link_set_gen3(false);
+    gen3_booted = false;
+    if (r == 1) {
+        bool stored = storage_put_mon(3, recv_sp, recv, GEN3_PK3_LEN);
+        printf("INJECT_RESULT ok received_species %d stored %d dex %d/%d\n",
+               recv_sp, stored ? 1 : 0, storage_count(), storage_capacity());
+        ui_ok();
+    } else {
+        printf("INJECT_RESULT %s\n", r == 0 ? "cancelled" : "fail");
+        ui_error();
+    }
+    sleep_ms(2500);
+}
+
 static void do_inject(int slot) {
+    if (current_gen == 3) { run_gen3_inject(slot, 1000); return; }
     // -1 means "most recently captured"
     if (slot < 0) {
         slot = storage_last_written_index();
@@ -317,7 +351,10 @@ int main(void) {
             gesture_t g = read_gesture();
             if (g == GESTURE_INJECT) {
                 while (ui_button_down()) sleep_ms(10);  // wait for release
-                do_inject(inject_slot);
+                if (current_gen == 3 && !gen3_booted)
+                    run_gen3_multiboot(100);   // boot first; hold again to inject
+                else
+                    do_inject(inject_slot);
             } else if (g == GESTURE_SWITCH_GEN) {
                 current_gen = (current_gen % 3) + 1;   // cycle 1 -> 2 -> 3 -> 1
                 gen3_booted = false;
