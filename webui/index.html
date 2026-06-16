@@ -309,7 +309,7 @@ function setControls(connected) {
 }
 
 async function connect() {
-  port = await serialAPI.requestPort({ filters: [{ usbVendorId: 0x2E8A }] });
+  port = await serialAPI.requestPort();
   await port.open({ baudRate: 115200 });
   // pico_stdio_usb only sends once DTR is asserted; Web Serial doesn't by default.
   try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
