@@ -287,14 +287,9 @@ static int32_t swap_trade_dump(void) {
 // Returns the value, or 0 on timeout.
 static uint32_t wait_for_values(const uint8_t *vals, int n, absolute_time_t dl) {
     int consec = 0; int32_t found = -1, cur = 0;
-    int32_t last_logged = -2; int logs = 0;
     while (consec < OPTION_CONFIRM_THRESHOLD) {
-        if (time_reached(dl)) { printf("  [g3i] wait timed out\n"); return 0; }
+        if (time_reached(dl)) return 0;
         cur = swap_trade_dump();
-        if (cur != last_logged && logs < 60) {   // log distinct menu values
-            printf("  [g3i] dump 0x%06lx\n", (unsigned long)(cur & 0xFFFFFF));
-            last_logged = cur; logs++;
-        }
         bool ok = false;
         if (cur >= 0) {
             uint32_t cmd = ((uint32_t)cur >> 16) & 0xFF;
@@ -303,17 +298,12 @@ static uint32_t wait_for_values(const uint8_t *vals, int n, absolute_time_t dl) 
         consec = ok ? consec + 1 : 0;
         found = cur;
     }
-    printf("  [g3i] settled 0x%06lx\n", (unsigned long)((uint32_t)cur & 0xFFFFFF));
     return (uint32_t)cur;
 }
 
 static void send_value_repeated(uint32_t value) {
-    uint32_t r = 0;
     for (int k = 0; k <= OPTION_CONFIRM_THRESHOLD; k++)
-        r = swap_word(((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24) | value);
-    printf("  [g3i] sent 0x%06lx, dev replied 0x%06lx\n",
-           (unsigned long)(value & 0xFFFFFF), (unsigned long)(r & 0xFFFFFF));
-    sleep_ms(150);   // let the device settle before polling the next round
+        swap_word(((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24) | value);
 }
 
 // Returns 1 = committed (*given_up = cart slot it gave us), 0 = declined/stopped,
@@ -330,6 +320,12 @@ static int commit_inject(uint16_t our_species, int *given_up) {
     // Offer our mon (party slot 0): the species rides in the low bits.
     send_value_repeated(FIRST_TRADE_INDEX | our_species);
 
+    // Two accept rounds, then seven success rounds. NOTE: this faithfully ports
+    // the engine's _local_inject_commit_gen3, but on hardware Gen3-to-GenX always
+    // returns a *decline* at round 1 (0xB1) — same on the PC host (host/inject.py)
+    // — and sending our accept anyway makes the GBA explicitly deny the trade. So
+    // Gen 3 inject does not complete; it's experimental pending a correct port of
+    // the homebrew's partner trade-commit protocol. Capture works fully.
     for (int i = 0; i < 2; i++) {
         const uint8_t av[2] = {accept_trade[i], decline_trade[i]};
         uint32_t a = wait_for_values(av, 2, dl);

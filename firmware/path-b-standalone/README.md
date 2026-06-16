@@ -63,6 +63,14 @@ The build bakes the ~248 KB multiboot image into flash. It's generated from the
 (non-redistributed) homebrew, so run `./scripts/setup.sh` once before building so
 `tools/gen_baked_gen3.py` can produce `baked_gen3_mb.c`.
 
+> **Gen 3 injection is experimental and does not currently work.** The code
+> (`gen3_inject_mon`, the `i`/hold-to-inject paths) faithfully ports the engine's
+> `_local_inject_commit_gen3`, but on hardware Gen3-to-GenX returns a *decline* at
+> the trade-commit's round 1 (`0xB1`) — and the **PC host (`host/inject.py --gen 3`)
+> behaves identically** — so the trade never commits (forcing past it makes the GBA
+> explicitly deny). Completing it needs a correct port of the homebrew's partner
+> trade-commit protocol. **Capture is fully working;** inject is left in as a WIP.
+
 **Capturing Crystal:** hold to switch to Gen 2 (idle LED → purple), sit at the
 Trade Center table (the game will say "your friend is not ready" — that's normal
 until the board is armed), then tap to capture.
