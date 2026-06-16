@@ -15,4 +15,8 @@
 int gen3_capture_party(uint32_t pacing_us, uint8_t records[][GEN3_PK3_LEN],
                        int max_records);
 
+// Extract the Gen 3 internal species id from a 100-byte .pk3 record (the dex key
+// for storage). Decrypts only the one word it needs.
+uint16_t gen3_species(const uint8_t *rec);
+
 #endif // GEN3_TRADE_H

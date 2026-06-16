@@ -207,6 +207,19 @@ static void end_trade(void) {
         swap_word(((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24) | STOP_TRADE);
 }
 
+// Gen 3 species (the dex key) lives in the encrypted growth substructure: XOR the
+// block with pid^otid, then read the first u16 of the growth slot (its physical
+// position is set by pid%24). growth_slot[] = (enc_positions[i]>>0)&3, matching
+// the engine's init_enc_positions. Only the one word we need is decrypted.
+uint16_t gen3_species(const uint8_t *rec) {
+    static const uint8_t growth_slot[24] =
+        {0,0,0,0,0,0,1,1,2,3,2,3,1,1,2,3,2,3,1,1,2,3,2,3};
+    uint32_t pid = u32le(rec, 0), otid = u32le(rec, 4);
+    uint32_t key = pid ^ otid;
+    uint32_t off = 32 + 12 * growth_slot[pid % 24];   // enc_data_pos=32, 12-byte slots
+    return (uint16_t)((u32le(rec, off) ^ key) & 0xFFFF);
+}
+
 int gen3_capture_party(uint32_t pacing_us, uint8_t records[][GEN3_PK3_LEN], int max_records) {
     g_pace = pacing_us;
     static uint8_t buf[SECTION_LEN];

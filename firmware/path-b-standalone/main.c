@@ -228,12 +228,15 @@ static void handle_serial(void) {
             if (n < 0) {
                 printf("G3T_RESULT fail\n");
             } else {
+                int stored = 0;
                 for (int i = 0; i < n; i++) {
-                    printf("MON3 %d ", i);
+                    uint16_t sp = gen3_species(recs[i]);
+                    if (storage_put_mon(3, sp, recs[i], GEN3_PK3_LEN)) stored++;
+                    printf("MON3 %d %u ", i, sp);
                     for (int b = 0; b < GEN3_PK3_LEN; b++) printf("%02x", recs[i][b]);
                     printf("\n");
                 }
-                printf("G3T_RESULT ok %d\n", n);
+                printf("G3T_RESULT ok %d stored %d\n", n, stored);
             }
             show_idle();
             break;
