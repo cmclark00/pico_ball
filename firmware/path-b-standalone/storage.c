@@ -5,25 +5,28 @@
 #include <string.h>
 
 // Dex layout: a contiguous array of fixed 128-byte slots in a reserved flash
-// region. Slot index = (gen-1)*256 + species, so each (gen, species) has a
-// dedicated slot and an upsert is just a rewrite of that slot. Flash erases are
-// per 4 KB sector (32 slots), so writing a slot is a read-modify-write of its
-// sector.
+// region. Slots are keyed by (gen, species) via a linear upsert — recapturing a
+// species rewrites its slot, new species take the first free slot. This is
+// generation-agnostic (Gen 3 species exceed 255, so the old idx=(gen-1)*256+
+// species scheme with a 1-byte species no longer works). Flash erases are per
+// 4 KB sector (32 slots), so writing a slot is a read-modify-write of its sector.
 #define SECTOR_SIZE FLASH_SECTOR_SIZE              // 4096
 #define SLOT_SIZE 128
 #define SLOTS_PER_SECTOR (SECTOR_SIZE / SLOT_SIZE) // 32
-#define DEX_SLOTS 512                              // 2 gens * 256 species
 #define RESERVED_SECTORS 32                         // 128 KB region (erased on wipe)
+#define DEX_SLOTS (RESERVED_SECTORS * SLOTS_PER_SECTOR)  // 1024 slots
 #define VAULT_OFFSET (PICO_FLASH_SIZE_BYTES - (RESERVED_SECTORS * SECTOR_SIZE))
 
-// Slot header: ['P','K'][gen][species][len_lo][len_hi][cnt_lo][cnt_hi] then payload.
-// Bytes [6..7] are a monotonic 16-bit write counter (little-endian).
-// Legacy slots written before the counter was added have 0xFFFF there.
+// Slot header (8 B): ['P','3'][gen][species_lo][species_hi][len][cnt_lo][cnt_hi]
+// then payload. species is 16-bit (Gen 3 internal ids reach ~411); len is one
+// byte (records are <=120). Bytes [6..7] are a monotonic 16-bit write counter.
+// The 'P','3' magic supersedes the old 'P','K' format — old slots read as unused
+// (wipe once after upgrading).
 #define HDR_LEN 8
 #define MAX_PAYLOAD (SLOT_SIZE - HDR_LEN)          // 120
 #define NO_COUNTER 0xFFFF
 
-static const uint8_t MAGIC[2] = {'P', 'K'};
+static const uint8_t MAGIC[2] = {'P', '3'};
 
 static const uint8_t *slot_ptr(int idx) {
     return (const uint8_t *)(XIP_BASE + VAULT_OFFSET + ((uint32_t)idx * SLOT_SIZE));
@@ -73,9 +76,19 @@ static uint16_t max_counter(void) {
 }
 
 bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
-    if (gen < 1 || gen > 2 || species < 1 || species > 255) return false;
+    if (gen < 1 || gen > 3 || species < 1 || species > 0xFFFF) return false;
     if (len > MAX_PAYLOAD) return false;
-    int idx = (gen - 1) * 256 + species;
+
+    // Find an existing (gen, species) slot to overwrite, else the first free one.
+    int idx = -1, free_idx = -1;
+    for (int i = 0; i < DEX_SLOTS; i++) {
+        if (!slot_used(i)) { if (free_idx < 0) free_idx = i; continue; }
+        const uint8_t *p = slot_ptr(i);
+        int sp = (int)p[3] | ((int)p[4] << 8);
+        if (p[2] == gen && sp == species) { idx = i; break; }
+    }
+    if (idx < 0) idx = free_idx;
+    if (idx < 0) return false;  // vault full
 
     uint16_t cnt = max_counter() + 1;
     if (cnt == NO_COUNTER) cnt = 1;  // skip reserved sentinel value
@@ -85,9 +98,9 @@ bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
     slot[0] = MAGIC[0];
     slot[1] = MAGIC[1];
     slot[2] = (uint8_t)gen;
-    slot[3] = (uint8_t)species;
-    slot[4] = (uint8_t)(len & 0xFF);
-    slot[5] = (uint8_t)((len >> 8) & 0xFF);
+    slot[3] = (uint8_t)(species & 0xFF);
+    slot[4] = (uint8_t)((species >> 8) & 0xFF);
+    slot[5] = (uint8_t)len;
     slot[6] = (uint8_t)(cnt & 0xFF);
     slot[7] = (uint8_t)((cnt >> 8) & 0xFF);
     memcpy(slot + HDR_LEN, data, len);
@@ -123,8 +136,8 @@ uint16_t storage_read_slot(int index, int *gen, int *species, uint8_t *out, uint
         if (seen == index) {
             const uint8_t *p = slot_ptr(i);
             if (gen) *gen = p[2];
-            if (species) *species = p[3];
-            uint16_t len = (uint16_t)p[4] | ((uint16_t)p[5] << 8);
+            if (species) *species = (int)p[3] | ((int)p[4] << 8);
+            uint16_t len = p[5];
             if (len > out_cap) len = out_cap;
             memcpy(out, p + HDR_LEN, len);
             return len;

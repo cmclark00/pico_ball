@@ -10,11 +10,12 @@
 // Number of dex entries currently stored.
 int storage_count(void);
 
-// Total slots available (across both generations).
+// Total slots available (shared across all generations).
 int storage_capacity(void);
 
-// Upsert one Pokémon into the dex by (gen, species). gen is 1 or 2; species is
-// the in-data species byte (1..255). Returns false on invalid args.
+// Upsert one Pokémon into the dex by (gen, species). gen is 1..3; species is the
+// generation's internal species id (1..65535; Gen 3 reaches ~411). Returns false
+// on invalid args, an over-long record, or a full vault.
 bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len);
 
 // Read the index-th stored entry (0..count-1). Sets *gen and *species, copies
