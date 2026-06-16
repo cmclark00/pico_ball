@@ -32,14 +32,36 @@ cp firmware/prebuilt/pico_ball_vault.uf2 /media/$USER/RPI-RP2/
 | Gesture | Action |
 |---|---|
 | **Tap** (short press) | Capture, using the currently selected generation |
-| **Hold ~0.7 s** | Switch generation: Gen 1 (R/B/Y) ⇄ Gen 2 (G/S/C) |
+| **Hold ~0.7 s** | Switch generation, cycling **Gen 1 → Gen 2 → Gen 3 → Gen 1** |
 | **Hold ~2 s** | Inject dex slot 0 into a cartridge (LED turns amber to confirm) |
 
+**Gen 3 capture is two taps** (it multiboots the GBA, then trades): with Gen 3
+selected, **tap once** to multiboot Gen3-to-GenX into the GBA (LED → amber); on
+the GBA pick the Gen 3 trade option and reach the trade screen; then **tap again**
+to capture (LED green on success). See "Capturing Gen 3" below.
+
 The **idle LED color shows the mode**: dim **white** = Gen 1, dim **purple** =
-Gen 2. When you hold to switch gen, it confirms with a pulse: **1× green** = Gen 1,
-**2× blue** = Gen 2. (Over USB you can also send `1`/`2`, or use the WebUI's
-generation dropdown.) Gen 2 records are larger (1036 B vs 625 B) — the host tools
-tell them apart automatically.
+Gen 2, dim **cyan** = Gen 3. When you hold to switch gen, it confirms with a
+pulse: **1× green** = Gen 1, **2× blue** = Gen 2, **3× cyan** = Gen 3. (Over USB
+you can also send `1`/`2`/`3`, or use the WebUI's generation dropdown.) Gen 2
+records are larger (1036 B vs 625 B) — the host tools tell them apart
+automatically.
+
+### Capturing Gen 3 (R/S/E/FR/LG)
+Gen 3 can't use the Cable Club — the board **multiboots Lorenzooone's Gen3-to-GenX**
+program into the GBA over the link, then acts as the trade peer. No PC runs the
+trade engine; the board does it all over the same link cable, just faster (4-byte
+SIO32 transfers). Steps:
+1. Insert the Gen 3 cartridge; turn the GBA **on at the BIOS/boot screen** (no game).
+2. Select Gen 3 (hold to cycle to cyan, or send `3`).
+3. **Tap** (or send `m`): the board multiboots Gen3-to-GenX (LED → amber).
+4. On the GBA, choose the **Gen 3 trade option** and reach the trade screen.
+5. **Tap again** (or send `t`): the board reads your party and stores it. LED
+   green. Each Pokémon is a 100-byte `.pk3`, retrievable like any other capture.
+
+The build bakes the ~248 KB multiboot image into flash. It's generated from the
+(non-redistributed) homebrew, so run `./scripts/setup.sh` once before building so
+`tools/gen_baked_gen3.py` can produce `baked_gen3_mb.c`.
 
 **Capturing Crystal:** hold to switch to Gen 2 (idle LED → purple), sit at the
 Trade Center table (the game will say "your friend is not ready" — that's normal
@@ -69,7 +91,9 @@ persists as the target for button presses.
 |---|---|
 | dim white | idle / ready — **Gen 1** mode |
 | dim purple | idle / ready — **Gen 2** mode |
-| 1× green / 2× blue pulse | generation switched to Gen 1 / Gen 2 (on hold) |
+| dim cyan | idle / ready — **Gen 3** mode |
+| 1× green / 2× blue / 3× cyan pulse | generation switched to Gen 1 / 2 / 3 (on hold) |
+| amber (steady) | Gen 3 multiboot done — pick the trade option, then tap to capture |
 | amber (brief flash) | inject threshold crossed — release to arm |
 | blue | armed, waiting for / talking to the cartridge |
 | green | captured / injected & stored ✅ |
@@ -91,9 +115,11 @@ Or talk to it manually in any serial terminal (115200):
 |---|---|
 | `c` | print dex count |
 | `d` | dump the dex (`MON <gen> <species> <len> <hex>` per entry) |
-| `a` | arm and run a capture (same as button tap) |
+| `a` | arm and run a Gen 1/2 capture (same as button tap) |
 | `i` or `i <n>` | inject dex slot n (default: last slot set; omit n to reuse) |
-| `1` / `2` | switch to Gen 1 / Gen 2 |
+| `1` / `2` / `3` | switch to Gen 1 / Gen 2 / Gen 3 |
+| `m` | Gen 3: multiboot Gen3-to-GenX into the GBA (optional `m <us>` pacing) |
+| `t` | Gen 3: trade-capture the party (GBA on its trade screen; optional `t <us>`) |
 | `r <n>` | delete dex slot n |
 | `w` | wipe the whole vault |
 
