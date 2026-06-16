@@ -309,7 +309,22 @@ function setControls(connected) {
 }
 
 async function connect() {
-  port = await serialAPI.requestPort();
+  if (navigator.serial) {
+    // Desktop Chrome/Edge: native Web Serial.
+    port = await serialAPI.requestPort();
+  } else {
+    // Mobile Chrome (WebUSB only): the polyfill's requestPort() forces a
+    // CDC-class device filter, but the Pico is a composite device (device class
+    // 0xEF / IAD), so Chrome's chooser filters it out. Grant it with a plain
+    // WebUSB chooser (no class filter) instead, then let the polyfill wrap the
+    // now-granted device via getPorts().
+    setStatus("Pick the board (it shows as a Pi Pico / CDC device)…");
+    await navigator.usb.requestDevice({ filters: [{ vendorId: 0x2E8A }] });
+    let ports = await serialAPI.getPorts();
+    port = ports.find(p => { try { return p.getInfo().usbVendorId === 0x2E8A; } catch (e) { return false; } })
+         || ports[ports.length - 1];
+    if (!port) throw new Error("Board granted but no serial port found (CDC interface missing?)");
+  }
   await port.open({ baudRate: 115200 });
   // pico_stdio_usb only sends once DTR is asserted; Web Serial doesn't by default.
   try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
