@@ -124,7 +124,9 @@
 <!-- Gen 3 path (WebUSB + multiboot). Attaches window.PicoGen3 for the app below. -->
 <script type="module" src="gen3.js"
         onerror="window.__gen3LoadError='gen3.js failed to load (404 or blocked). Serve over http://localhost — modules don\'t load from file://.'"></script>
-<script>
+<script type="module">
+import { serial as serialPolyfill } from "https://esm.sh/web-serial-polyfill";
+const serialAPI = navigator.serial || serialPolyfill;
 "use strict";
 // Surface any module load/eval failure so the Gen 3 button can explain itself.
 window.addEventListener("error", (e) => {
@@ -293,7 +295,8 @@ let lineWaiter = null;       // resolver for a sendCommand awaiting the next lin
 const statusEl = document.getElementById("status");
 function setStatus(t) { statusEl.textContent = t; }
 
-if (!("serial" in navigator)) {
+if (!navigator.serial && !navigator.usb) {
+  document.getElementById("unsupported").innerHTML = "This browser doesn't support Web Serial or WebUSB. Use Chrome or Edge.";
   document.getElementById("unsupported").style.display = "block";
   document.getElementById("connect").disabled = true;
 }
@@ -306,7 +309,7 @@ function setControls(connected) {
 }
 
 async function connect() {
-  port = await navigator.serial.requestPort();
+  port = await serialAPI.requestPort();
   await port.open({ baudRate: 115200 });
   // pico_stdio_usb only sends once DTR is asserted; Web Serial doesn't by default.
   try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
@@ -567,8 +570,8 @@ document.getElementById("gen").addEventListener("change", (e) => {
 });
 
 // Release the reader if the board is unplugged so a reconnect starts clean.
-if ("serial" in navigator) {
-  navigator.serial.addEventListener("disconnect", async (e) => {
+if (serialAPI) {
+  serialAPI.addEventListener("disconnect", async (e) => {
     if (port && e.target === port) {
       await stopReader();
       try { await port.close(); } catch (_) {}
