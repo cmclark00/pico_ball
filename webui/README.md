@@ -51,11 +51,19 @@ With the latest firmware flashed, the header/​capture controls drive the devic
 - **Delete** (per capture) — erases that record's flash slot.
 - **Wipe all** — erases the whole vault (with a confirm).
 
-### Gen 3 (R/S/E/FR/LG) — WebUSB, not Web Serial
-Gen 3 can't go through the on-device vault firmware (it needs 4-byte SIO32
-transfers and the GBA must run the **Gen3-to-GenX** homebrew, multibooted into
-RAM). So selecting **Gen 3** in the dropdown switches the page to a **WebUSB**
-path that mirrors `host/extract.py --gen 3` entirely in the browser:
+### Gen 3 (R/S/E/FR/LG)
+Gen 3 needs 4-byte SIO32 transfers and the GBA running the **Gen3-to-GenX**
+homebrew (multibooted into RAM). There are two ways to do it, and the page picks
+automatically:
+
+- **Standalone vault firmware over Web Serial (preferred).** If you're connected
+  with **Connect device**, picking **Gen 3** + **Capture now** drives the board's
+  on-device `m` (multiboot) then `t` (trade) commands — the board does everything,
+  exactly like gens 1/2. You'll be prompted to reach the GBA's trade screen
+  between the two steps. Captures persist to the board's flash and show in the dex.
+- **WebUSB against the reconfigurable firmware.** If you're *not* serial-connected,
+  the page falls back to a **WebUSB** path that mirrors `host/extract.py --gen 3`
+  entirely in the browser:
 
 1. Flash the board with the **reconfigurable firmware**
    (`third_party/gen3/gbusb_reconfigurable.uf2`, fetched by `scripts/setup.sh`).

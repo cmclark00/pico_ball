@@ -233,7 +233,7 @@ function card(mon, index) {
     </div>`;
   el.querySelector(".dl-pk1").addEventListener("click", () => downloadPkx(mon));
   if (index >= 0) {
-    el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index));
+    el.querySelector(".inj-mon").addEventListener("click", () => injectRecord(index, mon.gen));
     el.querySelector(".del-mon").addEventListener("click", () => deleteRecord(index));
   }
   return el;
@@ -257,7 +257,7 @@ function render(entries) {
       the Cable Club (recapturing a species updates its dex entry), then Refresh.</p>`;
     return;
   }
-  for (const gen of [1, 2]) {
+  for (const gen of [1, 2, 3]) {
     const group = entries.filter(e => e.gen === gen);
     if (!group.length) continue;
     const sec = document.createElement("div");
@@ -267,8 +267,9 @@ function render(entries) {
     head.innerHTML = `<h2 class="grow">Gen ${gen} dex — ${group.length} Pokémon</h2>`;
     head.appendChild(headButton("Download JSON", () =>
       downloadDexJson(group.map(e => e.mon), gen)));
-    head.appendChild(headButton("Download .sav", () =>
-      downloadSav(group.map(e => e.mon), gen)));
+    if (gen !== 3)   // .sav builder is Gen 1/2 only
+      head.appendChild(headButton("Download .sav", () =>
+        downloadSav(group.map(e => e.mon), gen)));
     sec.appendChild(head);
 
     const grid = document.createElement("div");
@@ -416,13 +417,16 @@ function captureNow() {
   });
 }
 
-// Gen 3 runs over WebUSB (reconfigurable firmware + multiboot), independent of
-// the Web Serial vault connection used by gens 1/2. See gen3.js.
+// Gen 3 capture has two routes:
+//  - connected to the standalone vault firmware over Web Serial -> drive its
+//    on-device m (multiboot) + t (trade) commands, just like gens 1/2;
+//  - otherwise -> the in-browser WebUSB path against the reconfigurable firmware.
 function captureGen3() {
+  if (port) return captureGen3Serial();
   if (!window.PicoGen3) {
     setStatus(window.__gen3LoadError ||
-      "Gen 3 module not loaded — serve over http://localhost (not file://) and " +
-      "check the DevTools console for a gen3.js/usb_link.js/multiboot.js error.");
+      "Gen 3: connect the vault board (Connect device) for on-device capture, or " +
+      "serve over http://localhost for the WebUSB path (see the DevTools console).");
     return;
   }
   return withBusy("Gen 3: connecting over WebUSB…", async () => {
@@ -436,6 +440,35 @@ function captureGen3() {
       console.error("Gen 3 capture failed:", e);
       setStatus("Gen 3: " + (e && e.message ? e.message : e));
     }
+  });
+}
+
+// Standalone Gen 3 over serial: the board multiboots Gen3-to-GenX, the user
+// reaches its trade screen, then the board runs the trade and stores to flash;
+// we refresh the dex to show the new Pokémon (same as gens 1/2).
+function captureGen3Serial() {
+  return withBusy("Gen 3: multibooting the GBA…", async () => {
+    let mb = "";
+    await sendCommand("m\n", l => l.startsWith("MB_RESULT"), 30000, l => {
+      if (l.startsWith("MB_RESULT")) mb = l;
+      else if (l.startsWith("MB:")) setStatus("Gen 3: " + l.slice(3).trim());
+    });
+    if (!mb.includes("ok")) { setStatus("Gen 3 multiboot failed (" + (mb || "no response") + ")"); return; }
+
+    const ok = confirm(
+      "Multiboot done. On the GBA, open Gen3-to-GenX, choose the Gen 3 trade " +
+      "option, and reach the trade screen (cartridge inserted). Click OK to capture.");
+    if (!ok) { setStatus("Gen 3: cancelled before capture"); return; }
+
+    setStatus("Gen 3: capturing party…");
+    let res = "";
+    await sendCommand("t\n", l => l.startsWith("G3T_RESULT"), 45000, l => {
+      if (l.startsWith("G3T_RESULT")) res = l;
+      else if (l.startsWith("G3T:")) setStatus("Gen 3: " + l.slice(4).trim());
+    });
+    if (!res.includes(" ok ")) { setStatus("Gen 3 capture failed (" + (res || "timed out") + ")"); return; }
+    await dump();   // refresh the dex (now includes Gen 3)
+    setStatus("Gen 3 " + res.replace("G3T_RESULT ", "").trim());
   });
 }
 
@@ -462,13 +495,44 @@ function showCapturedGen3(records) {
   }
 }
 
-function injectRecord(i) {
+function injectRecord(i, gen) {
+  if (gen === 3) return injectRecordGen3(i);
   return withBusy("Injecting… Cable Club → Trade Center → sit at table", async () => {
     let result = "";
     await sendCommand("i" + i + "\n", l => l.startsWith("INJECT_RESULT"), 120000,
                       l => { if (l.startsWith("INJECT_RESULT")) result = l; });
     setStatus(result.includes(" ok") ? "Injected!" : "Inject: " + result);
     await dump();
+  });
+}
+
+// Gen 3 inject over serial: select Gen 3 on the board, multiboot, reach the trade
+// screen, then inject slot i. On the GBA you pick which of YOUR Pokémon to give
+// away; the board gives it the stored one and vaults the one you gave.
+function injectRecordGen3(i) {
+  return withBusy("Gen 3 inject: multibooting the GBA…", async () => {
+    await sendCommand("3", l => l.startsWith("GEN"), 3000);   // target Gen 3 on the board
+    let mb = "";
+    await sendCommand("m\n", l => l.startsWith("MB_RESULT"), 30000, l => {
+      if (l.startsWith("MB_RESULT")) mb = l;
+      else if (l.startsWith("MB:")) setStatus("Gen 3: " + l.slice(3).trim());
+    });
+    if (!mb.includes("ok")) { setStatus("Gen 3 inject: multiboot failed (" + (mb || "no response") + ")"); return; }
+
+    const ok = confirm(
+      "Multiboot done. On the GBA, reach the Gen3-to-GenX trade screen, then OK.\n\n" +
+      "You'll pick which of your cartridge's Pokémon to give away — the board trades " +
+      "it the stored one, and vaults the one you gave (so nothing is lost).");
+    if (!ok) { setStatus("Gen 3 inject: cancelled"); return; }
+
+    setStatus("Gen 3 inject: pick your give-away on the GBA…");
+    let res = "";
+    await sendCommand("i" + i + "\n", l => l.startsWith("INJECT_RESULT"), 120000, l => {
+      if (l.startsWith("INJECT_RESULT")) res = l;
+      else if (l.startsWith("G3I:")) setStatus("Gen 3: " + l.slice(4).trim());
+    });
+    await dump();
+    setStatus("Gen 3 inject: " + (res.replace("INJECT_RESULT ", "").trim() || "no result"));
   });
 }
 

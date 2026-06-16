@@ -25,6 +25,8 @@
 #include "gen_profile.h"
 #include "storage.h"
 #include "ui.h"
+#include "gen3_multiboot.h"
+#include "gen3_trade.h"
 
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
@@ -61,17 +63,20 @@ static int read_uint(void) {
     return val;
 }
 
-// Idle LED shows the selected generation: dim white = Gen 1, dim purple = Gen 2.
+// Idle LED shows the selected generation: dim white = Gen 1, dim purple = Gen 2,
+// dim cyan = Gen 3.
 static void show_idle(void) {
     if (current_gen == 2) ui_color(12, 0, 18);
+    else if (current_gen == 3) ui_color(0, 12, 12);
     else ui_color(6, 6, 6);
 }
 
 // Confirm a generation change by pulsing `current_gen` times:
-// 1x green = Gen 1 (R/B/Y), 2x blue = Gen 2 (G/S/C).
+// 1x green = Gen 1 (R/B/Y), 2x blue = Gen 2 (G/S/C), 3x cyan = Gen 3 (R/S/E/FR/LG).
 static void blink_gen(void) {
     for (int i = 0; i < current_gen; i++) {
         if (current_gen == 2) ui_color(0, 0, 60);
+        else if (current_gen == 3) ui_color(0, 50, 50);
         else ui_color(0, 60, 0);
         sleep_ms(180);
         ui_color(0, 0, 0);
@@ -136,7 +141,102 @@ static void do_capture(void) {
     sleep_ms(2500);
 }
 
+// --- Gen 3 standalone capture (two phases: multiboot, then trade) ------------
+// Gen 3 can't use the Cable Club FSM: the board multiboots Gen3-to-GenX into the
+// GBA, the user navigates to its trade screen, then the board runs the trade.
+// `gen3_booted` tracks which phase a tap (or serial m/t) should do next.
+static bool gen3_booted = false;
+
+static void run_gen3_multiboot(uint32_t pace) {
+    printf("MB: multibooting (GBA must be at the BIOS/boot screen), pacing=%luus...\n",
+           (unsigned long)pace);
+    ui_armed();
+    gb_link_set_gen3(true);
+    bool ok = gen3_multiboot(pace);
+    gb_link_set_gen3(false);
+    if (ok) {
+        gen3_booted = true;
+        ui_color(40, 24, 0);  // amber: navigate the GBA to its trade screen, then capture
+        printf("MB_RESULT ok — on the GBA pick the Gen 3 trade option, then capture again\n");
+    } else {
+        gen3_booted = false;
+        ui_error();
+        printf("MB_RESULT fail\n");
+        sleep_ms(2000);
+    }
+}
+
+static void run_gen3_trade(uint32_t pace) {
+    printf("G3T: capturing (GBA on the Gen3-to-GenX trade screen), pacing=%luus...\n",
+           (unsigned long)pace);
+    ui_armed();
+    gb_link_set_gen3(true);
+    static uint8_t recs[6][GEN3_PK3_LEN];
+    int n = gen3_capture_party(pace, recs, 6);
+    gb_link_set_gen3(false);
+    gen3_booted = false;
+    if (n < 0) {
+        printf("G3T_RESULT fail\n");
+        ui_error();
+        sleep_ms(2000);
+        return;
+    }
+    int stored = 0;
+    for (int i = 0; i < n; i++) {
+        uint16_t sp = gen3_species(recs[i]);
+        if (storage_put_mon(3, sp, recs[i], GEN3_PK3_LEN)) stored++;
+        printf("MON3 %d %u ", i, sp);
+        for (int b = 0; b < GEN3_PK3_LEN; b++) printf("%02x", recs[i][b]);
+        printf("\n");
+    }
+    printf("G3T_RESULT ok %d stored %d dex %d/%d\n",
+           n, stored, storage_count(), storage_capacity());
+    ui_ok();
+    sleep_ms(2500);
+}
+
+// A Gen 3 tap does multiboot first, then (after the user reaches the trade
+// screen) the trade capture.
+static void do_capture_gen3(void) {
+    if (!gen3_booted) run_gen3_multiboot(100);
+    else run_gen3_trade(1000);
+}
+
+// Inject a stored Gen 3 mon back into a cartridge. The GBA must already be on the
+// Gen3-to-GenX trade screen (multiboot first). Select your give-away on the GBA;
+// the mon it gives back is vaulted so nothing is lost.
+static void run_gen3_inject(int slot, uint32_t pace) {
+    if (slot < 0) slot = storage_last_written_index();
+    int mon_gen = 0, species = 0;
+    uint16_t len = (slot < 0) ? 0
+        : storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
+    if (len == 0 || mon_gen != 3) {
+        printf("INJECT_RESULT fail: slot %d is not a Gen 3 record\n", slot);
+        ui_error(); sleep_ms(2000); return;
+    }
+    printf("G3I: injecting slot %d (Gen 3 species %d) — pick your give-away on the GBA, "
+           "pacing=%luus...\n", slot, species, (unsigned long)pace);
+    ui_armed();
+    gb_link_set_gen3(true);
+    static uint8_t recv[GEN3_PK3_LEN];
+    uint16_t recv_sp = 0;
+    int r = gen3_inject_mon(pace, record, (uint16_t)species, recv, &recv_sp);
+    gb_link_set_gen3(false);
+    gen3_booted = false;
+    if (r == 1) {
+        bool stored = storage_put_mon(3, recv_sp, recv, GEN3_PK3_LEN);
+        printf("INJECT_RESULT ok received_species %d stored %d dex %d/%d\n",
+               recv_sp, stored ? 1 : 0, storage_count(), storage_capacity());
+        ui_ok();
+    } else {
+        printf("INJECT_RESULT %s\n", r == 0 ? "cancelled" : "fail");
+        ui_error();
+    }
+    sleep_ms(2500);
+}
+
 static void do_inject(int slot) {
+    if (current_gen == 3) { run_gen3_inject(slot, 1000); return; }
     // -1 means "most recently captured"
     if (slot < 0) {
         slot = storage_last_written_index();
@@ -202,8 +302,20 @@ static void handle_serial(void) {
             show_idle();
             break;
         }
-        case '1': current_gen = 1; printf("GEN 1\n"); show_idle(); break;
-        case '2': current_gen = 2; printf("GEN 2\n"); show_idle(); break;
+        case '1': current_gen = 1; gen3_booted = false; printf("GEN 1\n"); show_idle(); break;
+        case '2': current_gen = 2; gen3_booted = false; printf("GEN 2\n"); show_idle(); break;
+        case '3': current_gen = 3; gen3_booted = false; printf("GEN 3\n"); show_idle(); break;
+        case 'm': {  // Gen 3: multiboot Gen3-to-GenX into the GBA (optional 'm 100' pacing)
+            int pace = read_uint();
+            run_gen3_multiboot(pace < 0 ? 100 : (uint32_t)pace);
+            break;
+        }
+        case 't': {  // Gen 3: trade capture (GBA on the trade screen; optional 't 1000' pacing)
+            int pace = read_uint();
+            run_gen3_trade(pace < 0 ? 1000 : (uint32_t)pace);
+            show_idle();
+            break;
+        }
         case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
         case 'r': {
             int n = read_uint();
@@ -222,9 +334,11 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Tap = capture | Hold ~0.7s = switch gen | Hold ~2s = inject last captured\n"
-           "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'=gen 'r n'=delete 'w'=wipe\n"
-           "Current: Gen %d. Cross-gen injection supported.\n",
+           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject last captured\n"
+           "Gen 3: tap multiboots the GBA, then (on its trade screen) tap again to capture.\n"
+           "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
+           "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w'=wipe\n"
+           "Current: Gen %d. Cross-gen injection supported (Gen 1<->2).\n",
            storage_count(), storage_capacity(), current_gen);
     show_idle();
 
@@ -237,14 +351,19 @@ int main(void) {
             gesture_t g = read_gesture();
             if (g == GESTURE_INJECT) {
                 while (ui_button_down()) sleep_ms(10);  // wait for release
-                do_inject(inject_slot);
+                if (current_gen == 3 && !gen3_booted)
+                    run_gen3_multiboot(100);   // boot first; hold again to inject
+                else
+                    do_inject(inject_slot);
             } else if (g == GESTURE_SWITCH_GEN) {
-                current_gen = (current_gen == 1) ? 2 : 1;
+                current_gen = (current_gen % 3) + 1;   // cycle 1 -> 2 -> 3 -> 1
+                gen3_booted = false;
                 printf("GEN %d (hold)\n", current_gen);
                 blink_gen();
                 while (ui_button_down()) sleep_ms(10);  // wait for release
             } else {                          // GESTURE_TAP: capture
-                do_capture();
+                if (current_gen == 3) do_capture_gen3();
+                else do_capture();
             }
             show_idle();
             prev = false;

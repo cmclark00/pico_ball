@@ -9,6 +9,8 @@ third_party/
 # Local copy of the Gen 3 multiboot homebrew for the WebUI (not redistributed;
 # fetched into third_party/ by scripts/setup.sh, copied to webui/ for serving)
 webui/*.gba
+# Generated from the (non-redistributed) homebrew for standalone multiboot
+firmware/path-b-standalone/baked_gen3_mb.c
 
 # Captured Pokémon are personal data; keep the folder, ignore contents
 vault/*
