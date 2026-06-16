@@ -287,9 +287,14 @@ static int32_t swap_trade_dump(void) {
 // Returns the value, or 0 on timeout.
 static uint32_t wait_for_values(const uint8_t *vals, int n, absolute_time_t dl) {
     int consec = 0; int32_t found = -1, cur = 0;
+    int32_t last_logged = -2; int logs = 0;
     while (consec < OPTION_CONFIRM_THRESHOLD) {
-        if (time_reached(dl)) return 0;
+        if (time_reached(dl)) { printf("  [g3i] wait timed out\n"); return 0; }
         cur = swap_trade_dump();
+        if (cur != last_logged && logs < 60) {   // log distinct menu values
+            printf("  [g3i] dump 0x%06lx\n", (unsigned long)(cur & 0xFFFFFF));
+            last_logged = cur; logs++;
+        }
         bool ok = false;
         if (cur >= 0) {
             uint32_t cmd = ((uint32_t)cur >> 16) & 0xFF;
@@ -298,12 +303,17 @@ static uint32_t wait_for_values(const uint8_t *vals, int n, absolute_time_t dl) 
         consec = ok ? consec + 1 : 0;
         found = cur;
     }
+    printf("  [g3i] settled 0x%06lx\n", (unsigned long)((uint32_t)cur & 0xFFFFFF));
     return (uint32_t)cur;
 }
 
 static void send_value_repeated(uint32_t value) {
+    uint32_t r = 0;
     for (int k = 0; k <= OPTION_CONFIRM_THRESHOLD; k++)
-        swap_word(((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24) | value);
+        r = swap_word(((uint32_t)(DONE_FLAG | IN_PARTY_FLAG) << 24) | value);
+    printf("  [g3i] sent 0x%06lx, dev replied 0x%06lx\n",
+           (unsigned long)(value & 0xFFFFFF), (unsigned long)(r & 0xFFFFFF));
+    sleep_ms(150);   // let the device settle before polling the next round
 }
 
 // Returns 1 = committed (*given_up = cart slot it gave us), 0 = declined/stopped,
@@ -342,11 +352,14 @@ static int commit_inject(uint16_t our_species, int *given_up) {
 int gen3_inject_mon(uint32_t pacing_us, const uint8_t *pk3, uint16_t our_species,
                     uint8_t received[GEN3_PK3_LEN], uint16_t *recv_species) {
     g_pace = pacing_us;
-    // Build the one-mon inject section: our mon at slot 0, party size 1, checksums.
+    // Build the one-mon inject section exactly like create_trading_data: an
+    // all-zero section with just party size + our mon (+ its version/ribbon, which
+    // for a 100-byte .pk3 are zero), then the checksums. NOT from the baked
+    // partner — that carries base.bin's trainer name etc., which the GBA rejects.
     static uint8_t section[SECTION_LEN];
-    memcpy(section, baked_party_gen3, SECTION_LEN);
-    memcpy(section + TRADING_POKEMON_POS, pk3, GEN3_PK3_LEN);
+    memset(section, 0, SECTION_LEN);
     wr32le(section, TRADING_PARTY_INFO_POS, 1);
+    memcpy(section + TRADING_POKEMON_POS, pk3, GEN3_PK3_LEN);
     generate_checksums(section);
 
     static uint8_t buf[SECTION_LEN];        // the cartridge's party
