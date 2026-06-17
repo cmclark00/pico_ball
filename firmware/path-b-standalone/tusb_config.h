@@ -12,7 +12,11 @@
 #define CFG_TUD_ENABLED         1
 #define CFG_TUD_ENDPOINT0_SIZE  64
 
-#define CFG_TUD_CDC             1
+// Vendor-only (no CDC): Android won't expose a device to WebUSB if it has a CDC
+// interface (the kernel claims it), so the vault presents a single WebUSB vendor
+// interface. Desktop + host tools talk to it over WebUSB too. (Set CFG_TUD_CDC 1
+// to get the composite CDC+vendor build, but that hides the device on Android.)
+#define CFG_TUD_CDC             0
 #define CFG_TUD_VENDOR          1
 #define CFG_TUD_MSC             0
 #define CFG_TUD_HID             0

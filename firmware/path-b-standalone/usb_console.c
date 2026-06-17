@@ -38,42 +38,65 @@ static bool timer_task(repeating_timer_t *rt) {
     return true;
 }
 
-// --- stdio driver: write to CDC + vendor, read from either ------------------
-static bool cdc_ready(void)    { return tud_cdc_connected(); }
+// --- stdio driver: write to vendor (+ CDC if built), read from either -------
 static bool vendor_ready(void) { return tud_mounted() && web_connected; }
 
-// Write `buf` to one interface, pacing on its TX FIFO like the SDK's CDC path.
-static void write_one(const char *buf, int len, bool cdc) {
+// Write `buf` to the vendor IN endpoint, pacing on its TX FIFO.
+static void write_vendor(const char *buf, int len) {
     uint64_t last_avail = time_us_64();
     for (int i = 0; i < len;) {
-        uint32_t avail = cdc ? tud_cdc_write_available() : tud_vendor_write_available();
         int n = len - i;
+        uint32_t avail = tud_vendor_write_available();
         if ((uint32_t)n > avail) n = (int)avail;
         if (n > 0) {
-            int wrote = cdc ? (int)tud_cdc_write(buf + i, (uint32_t)n)
-                            : (int)tud_vendor_write(buf + i, (uint32_t)n);
-            if (cdc) tud_cdc_write_flush(); else tud_vendor_flush();
+            int wrote = (int)tud_vendor_write(buf + i, (uint32_t)n);
+            tud_vendor_flush();
             i += wrote;
             last_avail = time_us_64();
         } else {
             tud_task();
-            if (cdc) tud_cdc_write_flush(); else tud_vendor_flush();
-            bool still = cdc ? cdc_ready() : vendor_ready();
-            if (!still || time_us_64() > last_avail + STDOUT_TIMEOUT_US) break;
+            tud_vendor_flush();
+            if (!vendor_ready() || time_us_64() > last_avail + STDOUT_TIMEOUT_US) break;
         }
     }
 }
 
+#if CFG_TUD_CDC
+static bool cdc_ready(void) { return tud_cdc_connected(); }
+static void write_cdc(const char *buf, int len) {
+    uint64_t last_avail = time_us_64();
+    for (int i = 0; i < len;) {
+        int n = len - i;
+        uint32_t avail = tud_cdc_write_available();
+        if ((uint32_t)n > avail) n = (int)avail;
+        if (n > 0) {
+            int wrote = (int)tud_cdc_write(buf + i, (uint32_t)n);
+            tud_cdc_write_flush();
+            i += wrote;
+            last_avail = time_us_64();
+        } else {
+            tud_task();
+            tud_cdc_write_flush();
+            if (!cdc_ready() || time_us_64() > last_avail + STDOUT_TIMEOUT_US) break;
+        }
+    }
+}
+#endif
+
 static void vault_out_chars(const char *buf, int length) {
     if (!mutex_try_enter_block_until(&usb_mutex, make_timeout_time_ms(100))) return;
-    if (cdc_ready())    write_one(buf, length, true);
-    if (vendor_ready()) write_one(buf, length, false);
+#if CFG_TUD_CDC
+    if (cdc_ready()) write_cdc(buf, length);
+#endif
+    if (vendor_ready()) write_vendor(buf, length);
     mutex_exit(&usb_mutex);
 }
 
 static void vault_out_flush(void) {
     if (!mutex_try_enter_block_until(&usb_mutex, make_timeout_time_ms(100))) return;
+#if CFG_TUD_CDC
     tud_cdc_write_flush();
+#endif
     tud_vendor_flush();
     mutex_exit(&usb_mutex);
 }
@@ -81,10 +104,13 @@ static void vault_out_flush(void) {
 static int vault_in_chars(char *buf, int length) {
     int rc = PICO_ERROR_NO_DATA;
     if (!mutex_try_enter_block_until(&usb_mutex, make_timeout_time_ms(100))) return rc;
-    if (cdc_ready() && tud_cdc_available()) {
+#if CFG_TUD_CDC
+    if (tud_cdc_connected() && tud_cdc_available()) {
         int n = (int)tud_cdc_read(buf, (uint32_t)length);
-        if (n) rc = n;
-    } else if (tud_mounted() && tud_vendor_available()) {
+        if (n) { mutex_exit(&usb_mutex); return n; }
+    }
+#endif
+    if (tud_mounted() && tud_vendor_available()) {
         int n = (int)tud_vendor_read(buf, (uint32_t)length);
         if (n) { web_connected = true; rc = n; }   // first vendor byte = a client is talking
     }

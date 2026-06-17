@@ -309,18 +309,18 @@ function setControls(connected) {
 }
 
 async function connect() {
-  if (navigator.serial) {
-    // Desktop Chrome/Edge: native Web Serial over the board's CDC interface.
+  // The vault firmware is a WebUSB vendor device (no CDC — Android won't expose
+  // CDC to WebUSB), so use WebUSB everywhere when available. Web Serial is only a
+  // fallback for browsers without WebUSB.
+  if (navigator.usb) {
+    await connectVaultUsb();
+  } else if (navigator.serial) {
     port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
-    // pico CDC only sends once DTR is asserted; Web Serial doesn't by default.
     try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
-    await new Promise(r => setTimeout(r, 200));  // let the CDC settle
+    await new Promise(r => setTimeout(r, 200));
   } else {
-    // Mobile Chrome: no Web Serial, and Android won't expose the board's CDC to
-    // WebUSB. Talk to the board's WebUSB *vendor* interface instead (same text
-    // command protocol). Requires the composite vault firmware.
-    await connectVaultUsb();
+    throw new Error("This browser has no WebUSB or Web Serial. Use Chrome or Edge.");
   }
   startReader();
   setStatus("Connected");
