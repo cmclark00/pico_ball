@@ -14,10 +14,8 @@
 // drains the IN endpoint into a byte FIFO, and reads consume from the FIFO with
 // real timeouts and fragment reassembly — the same approach as the Web Serial
 // reader in index.html. All multi-byte values are big-endian, like usb_link.py.
-import { serial } from 'https://esm.sh/web-serial-polyfill';
 export const USB_VID = 0xCAFE;
 export const USB_PID = 0x4011;
-const serialDevice = navigator.serial ? navigator.serial : serial;
 const VENDOR_INTERFACE = 2;
 const EP_OUT = 3;            // 0x03
 const EP_IN = 3;            // 0x83 -> endpoint number 3, IN direction

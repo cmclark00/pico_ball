@@ -125,8 +125,6 @@
 <script type="module" src="gen3.js"
         onerror="window.__gen3LoadError='gen3.js failed to load (404 or blocked). Serve over http://localhost — modules don\'t load from file://.'"></script>
 <script type="module">
-import { serial as serialPolyfill } from "https://esm.sh/web-serial-polyfill";
-const serialAPI = navigator.serial || serialPolyfill;
 "use strict";
 // Surface any module load/eval failure so the Gen 3 button can explain itself.
 window.addEventListener("error", (e) => {
@@ -292,6 +290,8 @@ let reader = null;
 let readerPump = null;       // the running pump promise
 let lineQueue = [];          // complete lines decoded but not yet consumed
 let lineWaiter = null;       // resolver for a sendCommand awaiting the next line
+let usbDev = null;           // WebUSB vault transport (mobile): {dev, epOut, epIn, itf}
+function connected() { return !!port || !!usbDev; }
 const statusEl = document.getElementById("status");
 function setStatus(t) { statusEl.textContent = t; }
 
@@ -310,38 +310,58 @@ function setControls(connected) {
 
 async function connect() {
   if (navigator.serial) {
-    // Desktop Chrome/Edge: native Web Serial.
-    port = await serialAPI.requestPort();
+    // Desktop Chrome/Edge: native Web Serial over the board's CDC interface.
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    // pico CDC only sends once DTR is asserted; Web Serial doesn't by default.
+    try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
+    await new Promise(r => setTimeout(r, 200));  // let the CDC settle
   } else {
-    // Mobile Chrome (WebUSB only): the polyfill's requestPort() forces a
-    // CDC-class device filter, but the Pico is a composite device (device class
-    // 0xEF / IAD), so Chrome's chooser filters it out. Grant it with a plain
-    // WebUSB chooser (no class filter) instead, then let the polyfill wrap the
-    // now-granted device via getPorts().
-    setStatus("Pick the board (it shows as a Pi Pico / CDC device)…");
-    await navigator.usb.requestDevice({ filters: [{ vendorId: 0x2E8A }] });
-    let ports = await serialAPI.getPorts();
-    port = ports.find(p => { try { return p.getInfo().usbVendorId === 0x2E8A; } catch (e) { return false; } })
-         || ports[ports.length - 1];
-    if (!port) throw new Error("Board granted but no serial port found (CDC interface missing?)");
+    // Mobile Chrome: no Web Serial, and Android won't expose the board's CDC to
+    // WebUSB. Talk to the board's WebUSB *vendor* interface instead (same text
+    // command protocol). Requires the composite vault firmware.
+    await connectVaultUsb();
   }
-  await port.open({ baudRate: 115200 });
-  // pico_stdio_usb only sends once DTR is asserted; Web Serial doesn't by default.
-  try { await port.setSignals({ dataTerminalReady: true, requestToSend: true }); } catch (e) {}
-  await new Promise(r => setTimeout(r, 200));  // let the CDC settle
   startReader();
   setStatus("Connected");
   setControls(true);
   await dump();
 }
 
+// Open the vault firmware's WebUSB vendor interface (class 0xFF) and send the
+// 0x22 "connect" so the firmware mirrors its console output to us.
+async function connectVaultUsb() {
+  setStatus("Pick the board (pico_ball vault)…");
+  const dev = await navigator.usb.requestDevice({ filters: [{ vendorId: 0x2E8A }] });
+  await dev.open();
+  if (dev.configuration === null) await dev.selectConfiguration(1);
+  const itf = dev.configuration.interfaces.find(
+    i => i.alternate.interfaceClass === 0xFF);
+  if (!itf) throw new Error("No WebUSB interface on the board — flash the latest vault firmware (composite CDC+WebUSB).");
+  await dev.claimInterface(itf.interfaceNumber);
+  const eps = itf.alternate.endpoints;
+  const epOut = eps.find(e => e.direction === "out").endpointNumber;
+  const epIn = eps.find(e => e.direction === "in").endpointNumber;
+  try {
+    await dev.controlTransferOut({ requestType: "class", recipient: "interface",
+                                   request: 0x22, value: 0x01, index: itf.interfaceNumber });
+  } catch (e) { /* best-effort: a vendor read also flags us as connected */ }
+  usbDev = { dev, epOut, epIn, itf: itf.interfaceNumber };
+}
+
 // Continuously drain the port into complete lines. Runs once per connection;
 // every sendCommand consumes from the queue it fills, so the readable stream is
 // locked exactly once and never contended.
+function feedLine(line) {
+  if (lineWaiter) { const w = lineWaiter; lineWaiter = null; w(line); }
+  else lineQueue.push(line);
+}
+
 function startReader() {
-  reader = port.readable.getReader();
   lineQueue = [];
   lineWaiter = null;
+  if (usbDev) { startUsbReader(); return; }
+  reader = port.readable.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   readerPump = (async () => {
@@ -352,17 +372,43 @@ function startReader() {
         buf += decoder.decode(value, { stream: true });
         let nl;
         while ((nl = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, nl).trim();
+          feedLine(buf.slice(0, nl).trim());
           buf = buf.slice(nl + 1);
-          if (lineWaiter) { const w = lineWaiter; lineWaiter = null; w(line); }
-          else lineQueue.push(line);
         }
       }
     } catch (e) { /* reader cancelled on disconnect */ }
   })();
 }
 
+// WebUSB (mobile): continuously read the vendor bulk-IN endpoint into lines.
+function startUsbReader() {
+  const decoder = new TextDecoder();
+  let buf = "";
+  readerPump = (async () => {
+    try {
+      while (usbDev) {
+        const res = await usbDev.dev.transferIn(usbDev.epIn, 64);
+        if (res.status === "stall") { try { await usbDev.dev.clearHalt("in", usbDev.epIn); } catch (e) {} continue; }
+        if (res.status !== "ok" || !res.data || !res.data.byteLength) continue;
+        buf += decoder.decode(res.data, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          feedLine(buf.slice(0, nl).trim());
+          buf = buf.slice(nl + 1);
+        }
+      }
+    } catch (e) { /* device closed */ }
+  })();
+}
+
 async function stopReader() {
+  if (usbDev) {
+    const d = usbDev; usbDev = null;
+    try { await d.dev.close(); } catch (e) {}
+    try { await readerPump; } catch (e) {}
+    readerPump = null; lineQueue = []; lineWaiter = null;
+    return;
+  }
   if (!reader) return;
   try { await reader.cancel(); } catch (e) {}
   try { reader.releaseLock(); } catch (e) {}
@@ -382,9 +428,14 @@ function nextLine(timeoutMs) {
 // Write a command and read text lines until doneFn(line) or timeout.
 // onLine(line) is called for every line. Returns when done (or timed out).
 async function sendCommand(payload, doneFn, timeoutMs, onLine) {
-  const writer = port.writable.getWriter();
-  await writer.write(new TextEncoder().encode(payload));
-  writer.releaseLock();
+  const bytes = new TextEncoder().encode(payload);
+  if (usbDev) {
+    await usbDev.dev.transferOut(usbDev.epOut, bytes);
+  } else {
+    const writer = port.writable.getWriter();
+    await writer.write(bytes);
+    writer.releaseLock();
+  }
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -440,7 +491,7 @@ function captureNow() {
 //    on-device m (multiboot) + t (trade) commands, just like gens 1/2;
 //  - otherwise -> the in-browser WebUSB path against the reconfigurable firmware.
 function captureGen3() {
-  if (port) return captureGen3Serial();
+  if (connected()) return captureGen3Serial();
   if (!window.PicoGen3) {
     setStatus(window.__gen3LoadError ||
       "Gen 3: connect the vault board (Connect device) for on-device capture, or " +
@@ -581,16 +632,24 @@ document.getElementById("wipe").addEventListener("click", wipeAll);
 document.getElementById("gen").addEventListener("change", (e) => {
   const cap = document.getElementById("capture");
   if (e.target.value === "3") cap.disabled = busy;
-  else setControls(!!port);
+  else setControls(connected());
 });
 
 // Release the reader if the board is unplugged so a reconnect starts clean.
-if (serialAPI) {
-  serialAPI.addEventListener("disconnect", async (e) => {
+if (navigator.serial) {
+  navigator.serial.addEventListener("disconnect", async (e) => {
     if (port && e.target === port) {
       await stopReader();
       try { await port.close(); } catch (_) {}
       port = null; setControls(false); setStatus("Disconnected");
+    }
+  });
+}
+if (navigator.usb) {
+  navigator.usb.addEventListener("disconnect", async (e) => {
+    if (usbDev && e.device === usbDev.dev) {
+      await stopReader();
+      setControls(false); setStatus("Disconnected");
     }
   });
 }

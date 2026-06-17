@@ -27,6 +27,7 @@
 #include "ui.h"
 #include "gen3_multiboot.h"
 #include "gen3_trade.h"
+#include "usb_console.h"
 
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
@@ -328,7 +329,7 @@ static void handle_serial(void) {
 }
 
 int main(void) {
-    stdio_init_all();   // USB CDC for debug/retrieval
+    usb_console_init();  // composite CDC + WebUSB-vendor console (mobile-capable)
     gb_link_init();
     ui_init();
 
