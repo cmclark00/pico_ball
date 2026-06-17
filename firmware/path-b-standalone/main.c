@@ -27,6 +27,8 @@
 #include "ui.h"
 #include "gen3_multiboot.h"
 #include "gen3_trade.h"
+#include "usb_console.h"
+#include "pico/bootrom.h"
 
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
@@ -316,6 +318,7 @@ static void handle_serial(void) {
             show_idle();
             break;
         }
+        case 'B': printf("BOOTSEL\n"); sleep_ms(50); reset_usb_boot(0, 0); break;
         case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
         case 'r': {
             int n = read_uint();
@@ -328,7 +331,7 @@ static void handle_serial(void) {
 }
 
 int main(void) {
-    stdio_init_all();   // USB CDC for debug/retrieval
+    usb_console_init();  // composite CDC + WebUSB-vendor console (mobile-capable)
     gb_link_init();
     ui_init();
 

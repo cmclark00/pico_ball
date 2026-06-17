@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
 import_standalone.py -- pull captured Pokémon off the standalone vault board
-(Path B firmware) over USB serial and decode them into ./vault.
+over WebUSB (its vendor interface) and decode them into ./vault.
 
-The firmware stores each capture as raw trade sections
-(random=10 | party=418 | patches=197). This sends the 'd' (dump) command, reads
-the hex records, applies the patch list, parses the party with the proven
-engine, and saves each captured party under vault/standalone_<n>/.
+The vault firmware is a WebUSB vendor-class device (VID 0x2E8A) with no CDC serial
+(Android won't expose CDC to WebUSB, so the WebUI uses the same vendor interface).
+This sends the 'd' (dump) command over the vendor bulk endpoints, reads the hex
+records, parses each with the proven engine, and saves them under vault/dex/.
 
 Usage:
-    python host/import_standalone.py                 # auto-detect the board
-    python host/import_standalone.py --port /dev/ttyACM0
+    python host/import_standalone.py        # auto-detect the board (2E8A vendor)
 """
 import argparse
 import os
@@ -23,7 +22,7 @@ sys.path.insert(0, HERE)
 
 from picovault import engine, savedata  # noqa: E402
 
-PICO_VID = 0x2E8A  # Raspberry Pi (pico_stdio_usb default)
+PICO_VID = 0x2E8A  # Raspberry Pi (the vault firmware's VID)
 
 
 class _FakeLink:
@@ -34,37 +33,75 @@ class _FakeLink:
         return 0
 
 
-def _find_port():
-    import serial.tools.list_ports
+def _open_vault():
+    """Find the vault board, claim its WebUSB vendor interface; return
+    (dev, ep_out, ep_in) or (None, None, None)."""
+    import usb.core
+    import usb.util
 
-    for p in serial.tools.list_ports.comports():
-        if p.vid == PICO_VID:
-            return p.device
-    return None
+    dev = usb.core.find(idVendor=PICO_VID)
+    if dev is None:
+        return None, None, None
+    if sys.platform != "win32":
+        try:
+            if dev.is_kernel_driver_active(0):
+                dev.detach_kernel_driver(0)
+        except Exception:  # noqa: BLE001
+            pass
+    try:  # macOS/libusb errors if a configuration is already active; only set if not
+        dev.get_active_configuration()
+    except usb.core.USBError:
+        dev.set_configuration()
+    itf = next(i for i in dev.get_active_configuration() if i.bInterfaceClass == 0xFF)
+    ep_out = usb.util.find_descriptor(
+        itf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
+        == usb.util.ENDPOINT_OUT)
+    ep_in = usb.util.find_descriptor(
+        itf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
+        == usb.util.ENDPOINT_IN)
+    try:  # 0x22 "connect" so the firmware mirrors its console output to us
+        dev.ctrl_transfer(0x21, 0x22, 0x0001, itf.bInterfaceNumber, None)
+    except Exception:  # noqa: BLE001
+        pass
+    return dev, ep_out, ep_in
 
 
-def _read_dump(port):
-    import serial
+def _read_dump():
+    import usb.core
+    import usb.util
 
-    with serial.Serial(port, 115200, timeout=2) as ser:
-        time.sleep(0.3)
-        ser.reset_input_buffer()
-        ser.write(b"d")
-        ser.flush()
-        records = []
+    dev, ep_out, ep_in = _open_vault()
+    if dev is None:
+        return None
+    try:
+        try:
+            ep_out.write(b"d")
+        except usb.core.USBError as exc:
+            if "ccess" in str(exc):  # "Access denied" -> another process holds it
+                print("The vault is in use by another program. Close the WebUI tab\n"
+                      "(or any browser/app connected to it over WebUSB) and retry.",
+                      file=sys.stderr)
+                raise SystemExit(2)
+            raise
+        records, buf = [], ""
         deadline = time.time() + 15
-        while time.time() < deadline:
-            line = ser.readline().decode(errors="replace").strip()
-            if not line:
-                continue
-            if line.startswith("MON "):
-                # MON <gen> <species> <len> <hex>
-                parts = line.split(" ", 4)
-                gen, species = int(parts[1]), int(parts[2])
-                records.append((gen, species, bytes.fromhex(parts[4])))
-            elif line == "END":
-                break
+        done = False
+        while time.time() < deadline and not done:
+            try:
+                buf += bytes(ep_in.read(64, timeout=400)).decode(errors="replace")
+            except Exception:  # noqa: BLE001 - timeout
+                pass
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                line = line.strip()
+                if line.startswith("MON "):
+                    parts = line.split(" ", 4)  # MON <gen> <species> <len> <hex>
+                    records.append((int(parts[1]), int(parts[2]), bytes.fromhex(parts[4])))
+                elif line == "END":
+                    done = True
         return records
+    finally:
+        usb.util.dispose_resources(dev)
 
 
 def _save_mon(traders, gen, rec, vault_dir):
@@ -79,18 +116,17 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--port", help="serial port (default: auto-detect 2E8A:*)")
     ap.add_argument("--out", default=os.path.join(REPO_ROOT, "vault"))
     args = ap.parse_args()
 
     try:
-        port = args.port or _find_port()
-        if not port:
-            print("Standalone board not found. Plug it in (USB) or pass --port.",
-                  file=sys.stderr)
+        print("Reading the vault over WebUSB (2E8A vendor interface)...")
+        records = _read_dump()
+        if records is None:
+            print("Vault board not found. Plug it into USB (it shows as a WebUSB\n"
+                  "vendor device, 2E8A). On Linux you may need the udev rule from\n"
+                  "scripts/setup.sh.", file=sys.stderr)
             return 2
-        print(f"Reading from {port}...")
-        records = _read_dump(port)
         if not records:
             print("No dex entries returned. Has the board captured anything yet?")
             return 1
@@ -98,13 +134,16 @@ def main():
         out_dir = os.path.join(os.path.abspath(args.out), "dex")
         with engine.engine_cwd():
             traders = {}
-            for g in (1, 2):
+            for g in (1, 2, 3):
                 t = engine.build_trader(_FakeLink(), verbose=False, sanity=True, gen=g)
                 engine.prime_capture_session(t)
                 traders[g] = t
             for gen, species, rec in records:
-                path = _save_mon(traders, gen, rec, out_dir)
-                print(f"  Gen {gen} #{species:<3} -> {os.path.basename(path)}")
+                try:
+                    path = _save_mon(traders, gen, rec, out_dir)
+                    print(f"  Gen {gen} #{species:<3} -> {os.path.basename(path)}")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  Gen {gen} #{species:<3} -> skipped ({exc})")
         print(f"\nSaved {len(records)} dex Pokémon into {out_dir}.")
         return 0
     except RuntimeError as exc:
