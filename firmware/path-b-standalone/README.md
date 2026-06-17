@@ -91,8 +91,8 @@ To inject a Pokémon from the dex back into a cartridge:
    automatically saved back to the dex (it won't be lost).
 
 To choose which stored Pokémon to inject, connect USB and send `i <n>` (slot
-number, 0-indexed from the dex list printed by `d`). The last slot set via serial
-persists as the target for button presses.
+number, 0-indexed from the dex list printed by `d`). The last slot set via the
+USB console persists as the target for button presses.
 
 ### LED states
 | Color | Meaning |
@@ -110,14 +110,18 @@ persists as the target for button presses.
 
 ## Get the captures onto a PC
 
-The firmware also exposes a USB serial console (for debug + retrieval):
+The firmware exposes a text command console over a **WebUSB vendor interface**
+("pico_ball vault", VID 2E8A) — not CDC serial, so it also works on Android (where
+Chrome won't expose a CDC device to WebUSB). Pull the captures with:
 
 ```bash
 source host/.venv/bin/activate
-python host/import_standalone.py        # auto-detects the board, decodes to vault/dex/
+python host/import_standalone.py        # auto-detects the board (WebUSB), decodes to vault/dex/
 ```
 
-Or talk to it manually in any serial terminal (115200):
+…or just use the [WebUI](../../webui/README.md). Only one process can claim the
+device at a time, so close the WebUI tab before running `import_standalone.py`
+(and vice-versa). The same text commands flow over that vendor channel:
 
 | Command | Effect |
 |---|---|
@@ -130,10 +134,17 @@ Or talk to it manually in any serial terminal (115200):
 | `t` | Gen 3: trade-capture the party (GBA on its trade screen; optional `t <us>`) |
 | `r <n>` | delete dex slot n |
 | `w` | wipe the whole vault |
+| `B` | reboot into BOOTSEL (drag-and-drop a new `.uf2`) |
 
-`import_standalone.py` saves each dex entry as a `.pk1` + `.json` in `vault/dex/`
-(same format as Path A — so you can also use `inject.py` from a PC). The WebUI
-reads the same dump and shows the dex.
+`import_standalone.py` saves each dex entry as a `.pk1`/`.pk2`/`.pk3` + `.json` in
+`vault/dex/` (same format as Path A — so you can also use `inject.py` from a PC).
+The WebUI reads the same dump and shows the dex.
+
+> The USB stack is a custom TinyUSB build (`usb_console.c`, `usb_descriptors.c`,
+> `tusb_config.h`) instead of the SDK's `stdio_usb`, because that one is CDC-only.
+> `printf`/`getchar` are routed over the vendor bulk endpoints by a custom
+> `stdio_driver_t`, and `tud_task()` is serviced from a timer + low-priority IRQ so
+> long blocking operations (multiboot, trades) don't stall USB.
 
 ## Build from source
 
@@ -177,8 +188,8 @@ run on hardware. Validate in stages using the USB console:
 
 1. **LED + button:** flash it; confirm idle white, and that pressing the button
    turns it blue then (after timeout with no game) red. Confirms UI + button.
-2. **Serial:** open the console; `c` prints the count (0). Confirms USB + flash
-   read.
+2. **USB console:** connect over WebUSB (the WebUI, or `import_standalone.py`); `c`
+   prints the count (0). Confirms USB + flash read.
 3. **First capture:** do a real capture at the Trade Center. Watch the console —
    it logs each step. Green = success.
 4. **Retrieve:** `python host/import_standalone.py` and confirm the decoded
