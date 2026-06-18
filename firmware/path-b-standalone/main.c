@@ -33,7 +33,7 @@
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
-static int inject_slot = -1; // which dex slot to inject (-1 = most recently captured)
+static int inject_slot = 0; // which dex slot to inject (default: slot 0; USB 'i <n>' overrides, -1 = most recent)
 
 static void dump_all(void) {
     int n = storage_count();
@@ -412,7 +412,7 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject last captured\n"
+           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject slot 0 (USB 'i n' picks)\n"
            "Gen 3: tap multiboots the GBA, then (on its trade screen) tap again to capture.\n"
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
            "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w'=wipe\n"
