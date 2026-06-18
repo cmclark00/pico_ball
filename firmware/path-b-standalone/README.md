@@ -94,6 +94,34 @@ To choose which stored Pokémon to inject, connect USB and send `i <n>` (slot
 number, 0-indexed from the dex list printed by `d`). The last slot set via the
 USB console persists as the target for button presses.
 
+### Transfer Gen 1/2 → Gen 3 onto a real cartridge (Poke Transporter GB)
+
+The board can put a captured Gen 1/2 Pokémon onto a **real Gen 3 cartridge** with
+**no flashcart** — it multiboots [Poke Transporter GB](https://github.com/GearsProgress/Poke_Transporter_GB)
+(PTGB, MIT) into the GBA over the link cable, then offers the stored mon to it as
+a normal Game Boy trade. PTGB converts it (Pal-Park style) and writes it to the
+cartridge's save. From there the mon follows the official Pal Park → … → HOME
+chain on real hardware. PTGB is baked into the firmware (no PC, no flashcart).
+
+You need: the board, a **GBA** (or SP/Game Boy Player), a **real Gen 3 cartridge**
+(R/S/E/FR/LG), and the link cable. Then:
+
+1. Start the GBA at its **BIOS/boot screen** with **no cartridge** inserted (or a
+   non-Gen-3 cart), link cable connected.
+2. On the board, send **`P`** over USB (or use the WebUI). It multiboots PTGB; the
+   LED goes **amber** when PTGB is running on the GBA.
+3. On the GBA, follow PTGB: **insert your Gen 3 cartridge**, choose the **Gen 1**
+   or **Gen 2** source matching your mon, and start the receive/trade.
+4. On the board, send **`o <slot>`** (slot from the `d` dump; omit `<slot>` for the
+   most recent). The board offers that mon to PTGB over the trade link.
+5. LED **green** = PTGB accepted it; let PTGB finish writing to the Gen 3 cart.
+
+> Status: the on-device multiboot + offer is wired up and the firmware is built,
+> but the board↔PTGB trade hasn't been validated on hardware yet — it reuses the
+> proven Gen 1/2 inject FSM, so it's expected to work, but treat it as **bring-up**
+> (capture console logs; see "Incremental bring-up"). PTGB itself is unmodified and
+> widely used.
+
 ### LED states
 | Color | Meaning |
 |---|---|
@@ -132,6 +160,8 @@ device at a time, so close the WebUI tab before running `import_standalone.py`
 | `1` / `2` / `3` | switch to Gen 1 / Gen 2 / Gen 3 |
 | `m` | Gen 3: multiboot Gen3-to-GenX into the GBA (optional `m <us>` pacing) |
 | `t` | Gen 3: trade-capture the party (GBA on its trade screen; optional `t <us>`) |
+| `P` | multiboot Poke Transporter GB into the GBA (Gen 1/2 → Gen 3 transfer; optional `P <us>`) |
+| `o` or `o <n>` | offer dex slot n to PTGB as a trade (default: last; Gen 1/2 only) |
 | `r <n>` | delete dex slot n |
 | `w` | wipe the whole vault |
 | `B` | reboot into BOOTSEL (drag-and-drop a new `.uf2`) |

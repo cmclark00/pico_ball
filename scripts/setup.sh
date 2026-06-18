@@ -114,6 +114,28 @@ else
   echo "    skipped build: need a C++ compiler + make. Gen 3 transfer disabled."
 fi
 
+# --- Poke Transporter GB multiboot ROM (standalone Gen 1/2 -> Gen 3 on-cart) ---
+# For the no-flashcart, on-cartridge transfer: the board multiboots PTGB into the
+# GBA and offers a stored Gen 1/2 mon to it. Building PTGB needs devkitARM; if it's
+# missing we skip it — the prebuilt firmware already has PTGB baked in.
+echo "==> Poke Transporter GB multiboot ROM (third_party/ptgb)"
+if [ -f third_party/ptgb/poke_transporter_gb_mb.gba ]; then
+  echo "    already present"
+elif command -v arm-none-eabi-gcc >/dev/null 2>&1 || [ -x "${DEVKITARM:-/opt/devkitpro/devkitARM}/bin/arm-none-eabi-gcc" ]; then
+  if bash tools/build_ptgb.sh >/dev/null 2>&1; then
+    echo "    built poke_transporter_gb_mb.gba"
+  else
+    echo "    WARNING: PTGB build failed. The prebuilt firmware already has it baked in;"
+    echo "             to rebuild firmware from source, run: bash tools/build_ptgb.sh"
+  fi
+else
+  echo "    skipped: devkitARM not found. The prebuilt firmware already has PTGB baked in."
+fi
+if [ -f third_party/ptgb/poke_transporter_gb_mb.gba ]; then
+  python3 tools/gen_baked_ptgb.py >/dev/null && \
+    echo "    generated firmware baked_ptgb_mb.c (standalone Gen 1/2 -> Gen 3 transfer)"
+fi
+
 cat <<'EOF'
 
 ==> Done.

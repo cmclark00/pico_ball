@@ -84,8 +84,20 @@ does, using its **[Pokémon Community Conversion Standard](https://github.com/Ge
 (PCCS, MIT). Species, level, moves, nickname, and OT are kept; PID / IVs / nature
 / ability are generated to match.
 
-`scripts/setup.sh` vendors and builds the converter. After that, pulling captures
-off the standalone board auto-writes a Gen 3 box `.pk3` for each Gen 1/2 mon:
+There are two ways to do it:
+
+**A. Onto a real Gen 3 cartridge — no flashcart, no PC** (standalone board). The
+board **multiboots Poke Transporter GB** into a GBA over the link cable, then
+offers a stored Gen 1/2 mon to it; PTGB converts it and writes it to the Gen 3
+cartridge's save. You only need the board, a GBA, a Gen 3 cart, and the cable —
+hand someone a flashed board and they're set. See
+[firmware/path-b-standalone/README.md](firmware/path-b-standalone/README.md)
+("Transfer Gen 1/2 → Gen 3"). From the cartridge, the mon rides the official Pal
+Park → … → HOME chain on real hardware.
+
+**B. As a file, for PKHeX/emulators.** `scripts/setup.sh` also builds a host
+converter (PCCS), so pulling captures off the board auto-writes a Gen 3 box `.pk3`
+for each Gen 1/2 mon:
 
 ```bash
 python host/import_standalone.py    # vault/dex/*.pk1 + vault/dex/gen3/*.pk3
@@ -93,6 +105,11 @@ python host/import_standalone.py    # vault/dex/*.pk1 + vault/dex/gen3/*.pk3
 
 The `.pk3` files are 80-byte box records — drag them straight into **PKHeX** (or a
 Gen 3 save). Run `python tools/test_pccs.py` to self-check the conversion.
+
+Both use the same engine (PCCS), so they produce the same conversion. The endgame
+is **Pokémon HOME**: a Gen 1/2 mon → Gen 3 → (Pal Park) Gen 4 → 5 → 6/7 → Bank →
+HOME, legal at each hop. The board does the one step with no official path (Gen
+1/2 → Gen 3); the rest is the standard forward-migration chain.
 
 ## View Pokémon straight from the device (WebUI)
 

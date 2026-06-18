@@ -8,6 +8,7 @@
 #include "gen3_multiboot.h"
 #include "gb_link.h"
 #include "baked_gen3_mb.h"
+#include "baked_ptgb_mb.h"
 #include "pico/stdlib.h"
 #include <stdio.h>
 
@@ -15,11 +16,11 @@
 
 static uint32_t g_pacing_us = 36;
 
-static inline uint32_t word_at(uint32_t byte_off) {
-    return (uint32_t)gen3_mb_image[byte_off] |
-           ((uint32_t)gen3_mb_image[byte_off + 1] << 8) |
-           ((uint32_t)gen3_mb_image[byte_off + 2] << 16) |
-           ((uint32_t)gen3_mb_image[byte_off + 3] << 24);
+static inline uint32_t word_at(const uint8_t *image, uint32_t byte_off) {
+    return (uint32_t)image[byte_off] |
+           ((uint32_t)image[byte_off + 1] << 8) |
+           ((uint32_t)image[byte_off + 2] << 16) |
+           ((uint32_t)image[byte_off + 3] << 24);
 }
 
 // One paced SIO32 exchange.
@@ -29,15 +30,17 @@ static inline uint32_t mb_swap(uint32_t out) {
     return r;
 }
 
-bool gen3_multiboot(uint32_t pacing_us) {
+// Multiboot any GBA multiboot image (Gen3-to-GenX, Poke Transporter GB, ...) into
+// a GBA at its BIOS screen. The image is streamed from flash; only the array +
+// logical size differ between callers.
+bool gba_multiboot(const uint8_t *image, uint32_t fsize, uint32_t pacing_us) {
     g_pacing_us = pacing_us;
-    const uint32_t fsize = gen3_mb_fsize;
     const uint32_t nwords = (fsize - 0xC0) >> 2;
 
     // Pass 1: rolling CRC over the raw image words (streamed from flash).
     uint32_t crcC = 0xC387;
     for (uint32_t i = 0xC0; i < fsize; i += 4) {
-        uint32_t tmp = word_at(i);
+        uint32_t tmp = word_at(image, i);
         for (int b = 0; b < 32; b++) {
             uint32_t bit = (crcC ^ tmp) & 1;
             crcC = bit ? ((crcC >> 1) ^ 0xC37B) : (crcC >> 1);
@@ -58,7 +61,7 @@ bool gen3_multiboot(uint32_t pacing_us) {
 
     // 0xC0-byte header (96 halfwords).
     for (int i = 0; i < 96; i++)
-        mb_swap(gen3_mb_image[i * 2] | (gen3_mb_image[i * 2 + 1] << 8));
+        mb_swap(image[i * 2] | (image[i * 2 + 1] << 8));
 
     mb_swap(0x6200);
     mb_swap(0x6200);
@@ -87,7 +90,7 @@ bool gen3_multiboot(uint32_t pacing_us) {
     // Stream the scrambled image (scramble each word on the fly).
     for (uint32_t k = 0; k < nwords; k++) {
         uint32_t off = 0xC0 + k * 4;
-        uint32_t dat = word_at(off) ^ ((0xFE000000u - off)) ^ 0x43202F2Fu;
+        uint32_t dat = word_at(image, off) ^ ((0xFE000000u - off)) ^ 0x43202F2Fu;
         seed = (seed * 0x6F646573u + 1u);      // uint32 wraps == &0xFFFFFFFF
         mb_swap(dat ^ seed);
     }
@@ -115,4 +118,12 @@ bool gen3_multiboot(uint32_t pacing_us) {
     mb_swap(0x0066);
     mb_swap(crcC & 0xFFFF);
     return true;
+}
+
+bool gen3_multiboot(uint32_t pacing_us) {
+    return gba_multiboot(gen3_mb_image, gen3_mb_fsize, pacing_us);
+}
+
+bool ptgb_multiboot(uint32_t pacing_us) {
+    return gba_multiboot(ptgb_mb_image, ptgb_mb_fsize, pacing_us);
 }
