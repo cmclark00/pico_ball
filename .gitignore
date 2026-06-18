@@ -11,6 +11,7 @@ third_party/
 webui/*.gba
 # Generated from the (non-redistributed) homebrew for standalone multiboot
 firmware/path-b-standalone/baked_gen3_mb.c
+firmware/path-b-standalone/baked_ptgb_mb.c
 
 # Captured Pokémon are personal data; keep the folder, ignore contents
 vault/*

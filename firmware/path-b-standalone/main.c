@@ -33,7 +33,7 @@
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
-static int inject_slot = -1; // which dex slot to inject (-1 = most recently captured)
+static int inject_slot = 0; // which dex slot to inject (default: slot 0; USB 'i <n>' overrides, -1 = most recent)
 
 static void dump_all(void) {
     int n = storage_count();
@@ -291,6 +291,70 @@ static void do_inject(int slot) {
     sleep_ms(2500);
 }
 
+// --- Gen 1/2 -> Gen 3 transfer via Poke Transporter GB ----------------------
+// The board multiboots Poke Transporter GB (PTGB) into the GBA, then offers a
+// stored Gen 1/2 mon to it over the normal Game Boy link trade. PTGB converts it
+// (Pal-Park style) and writes it to the real Gen 3 cartridge the user swaps into
+// the GBA after PTGB loads. No flashcart needed — the board is the loader.
+static bool ptgb_booted = false;
+
+static void run_ptgb_multiboot(uint32_t pace) {
+    printf("PTGB: multibooting Poke Transporter GB (GBA at its BIOS screen), "
+           "pacing=%luus...\n", (unsigned long)pace);
+    ui_armed();
+    gb_link_set_gen3(true);
+    bool ok = ptgb_multiboot(pace);
+    gb_link_set_gen3(false);
+    if (ok) {
+        ptgb_booted = true;
+        ui_color(40, 24, 0);  // amber: set up PTGB on the GBA, then offer the mon
+        printf("PTGB_MB_RESULT ok — on the GBA: insert your Gen 3 cartridge, choose\n"
+               "the Gen 1 or Gen 2 source and start receiving, then send 'o [slot]'.\n");
+    } else {
+        ptgb_booted = false;
+        ui_error();
+        printf("PTGB_MB_RESULT fail\n");
+        sleep_ms(2000);
+    }
+}
+
+// Offer a stored Gen 1/2 mon to PTGB (running on the GBA) as a link trade. Reuses
+// the proven Gen 1/2 inject FSM; PTGB is just the trade partner. Offers the mon
+// in its native generation (PTGB must be set to the matching Gen source).
+static void run_ptgb_offer(int slot, uint32_t pace) {
+    (void)pace;
+    if (slot < 0) slot = storage_last_written_index();
+    if (slot < 0) {
+        printf("PTGB_RESULT fail: vault empty\n");
+        ui_error(); sleep_ms(2000); return;
+    }
+    int mon_gen = 0, species = 0;
+    uint16_t len = storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
+    if (len == 0) {
+        printf("PTGB_RESULT fail: slot %d empty\n", slot);
+        ui_error(); sleep_ms(2000); return;
+    }
+    if (mon_gen != 1 && mon_gen != 2) {
+        printf("PTGB_RESULT fail: slot %d is Gen %d (PTGB takes Gen 1/2 only)\n",
+               slot, mon_gen);
+        ui_error(); sleep_ms(2000); return;
+    }
+    const gen_profile_t *p = gen_profile(mon_gen);
+    printf("PTGB: offering slot %d (Gen %d species 0x%02X) to Poke Transporter GB. "
+           "On the GBA pick Gen %d as the source and start the trade.\n",
+           slot, mon_gen, species, mon_gen);
+    ui_armed();
+    gb_inject_result_t r = inject_run(p, record, len);
+    switch (r) {
+        case GB_INJ_OK:        printf("PTGB_RESULT ok — PTGB has the mon; let it write "
+                                      "to the Gen 3 cart.\n"); ui_ok(); break;
+        case GB_INJ_CANCELLED: printf("PTGB_RESULT cancelled\n"); ui_error(); break;
+        case GB_INJ_DECLINED:  printf("PTGB_RESULT declined\n");  ui_error(); break;
+        default:               printf("PTGB_RESULT fail %d\n", (int)r); ui_error(); break;
+    }
+    sleep_ms(2500);
+}
+
 static void handle_serial(void) {
     int ch = getchar_timeout_us(0);
     switch (ch) {
@@ -318,6 +382,17 @@ static void handle_serial(void) {
             show_idle();
             break;
         }
+        case 'P': {  // Gen 1/2 -> Gen 3: multiboot Poke Transporter GB (optional 'P 100' pacing)
+            int pace = read_uint();
+            run_ptgb_multiboot(pace < 0 ? 100 : (uint32_t)pace);
+            break;
+        }
+        case 'o': {  // offer a stored Gen 1/2 mon to PTGB (optional 'o <slot>'; default last)
+            int n = read_uint();
+            run_ptgb_offer(n, 1000);
+            show_idle();
+            break;
+        }
         case 'B': printf("BOOTSEL\n"); sleep_ms(50); reset_usb_boot(0, 0); break;
         case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
         case 'r': {
@@ -337,10 +412,11 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject last captured\n"
+           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject slot 0 (USB 'i n' picks)\n"
            "Gen 3: tap multiboots the GBA, then (on its trade screen) tap again to capture.\n"
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
            "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w'=wipe\n"
+           "        'P'=multiboot Poke Transporter GB  'o [n]'=send Gen 1/2 mon to it (-> Gen 3 cart)\n"
            "Current: Gen %d. Cross-gen injection supported (Gen 1<->2).\n",
            storage_count(), storage_capacity(), current_gen);
     show_idle();

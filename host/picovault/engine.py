@@ -250,7 +250,14 @@ def _local_inject_commit_gen3(trader):
     """Gen 3 flavor of the local commit, mirroring RSESPTrading.do_trade's
     device-facing sequence: values are 24-bit (command byte << 16 | payload),
     there are two accept rounds and seven success rounds, and every value we
-    send is repeated option_confirmation_threshold+1 times."""
+    send is repeated option_confirmation_threshold+1 times.
+
+    NOTE: this still sends the accept/success words with empty low bits, which
+    Gen3-to-GenX rejects (it re-checks the low 16 bits against the trade's
+    species/PID and declines on a mismatch). The standalone firmware's
+    commit_inject (firmware/path-b-standalone/gen3_trade.c) carries the correct
+    payload — port that here if/when the PC-tethered Gen 3 inject is revived.
+    """
     send = trader.send_data_multiple_times
 
     # 1. The device's chosen Pokémon ((0x80+index) << 16 | species), or stop.

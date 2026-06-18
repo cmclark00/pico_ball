@@ -74,6 +74,43 @@ See **[docs/PLAN.md](docs/PLAN.md)** for the full phased plan, and
 **[docs/research.md](docs/research.md)** for everything the design is based on
 (with sources).
 
+## Gen 1/2 → Gen 3 "transfer" (Pal-Park-style recreation)
+
+The Game Boy and GBA games have **no native link** — Nintendo's first official
+forward-migration was Gen 3 → Gen 4 (Pal Park). So a literal transfer is
+impossible, but we can *recreate* a captured Gen 1/2 Pokémon as a legal Gen 3
+`.pk3`, exactly like **[Poké Transporter GB](https://github.com/GearsProgress/Poke_Transporter_GB)**
+does, using its **[Pokémon Community Conversion Standard](https://github.com/GearsProgress/Pokemon-Community-Conversion-Standard)**
+(PCCS, MIT). Species, level, moves, nickname, and OT are kept; PID / IVs / nature
+/ ability are generated to match.
+
+There are two ways to do it:
+
+**A. Onto a real Gen 3 cartridge — no flashcart, no PC** (standalone board). The
+board **multiboots Poke Transporter GB** into a GBA over the link cable, then
+offers a stored Gen 1/2 mon to it; PTGB converts it and writes it to the Gen 3
+cartridge's save. You only need the board, a GBA, a Gen 3 cart, and the cable —
+hand someone a flashed board and they're set. See
+[firmware/path-b-standalone/README.md](firmware/path-b-standalone/README.md)
+("Transfer Gen 1/2 → Gen 3"). From the cartridge, the mon rides the official Pal
+Park → … → HOME chain on real hardware.
+
+**B. As a file, for PKHeX/emulators.** `scripts/setup.sh` also builds a host
+converter (PCCS), so pulling captures off the board auto-writes a Gen 3 box `.pk3`
+for each Gen 1/2 mon:
+
+```bash
+python host/import_standalone.py    # vault/dex/*.pk1 + vault/dex/gen3/*.pk3
+```
+
+The `.pk3` files are 80-byte box records — drag them straight into **PKHeX** (or a
+Gen 3 save). Run `python tools/test_pccs.py` to self-check the conversion.
+
+Both use the same engine (PCCS), so they produce the same conversion. The endgame
+is **Pokémon HOME**: a Gen 1/2 mon → Gen 3 → (Pal Park) Gen 4 → 5 → 6/7 → Bank →
+HOME, legal at each hop. The board does the one step with no official path (Gen
+1/2 → Gen 3); the rest is the standard forward-migration chain.
+
 ## View Pokémon straight from the device (WebUI)
 
 With the standalone (Path B) firmware flashed, you don't need to copy anything to
@@ -83,9 +120,9 @@ disk to look at your captures:
 cd webui && python3 -m http.server 8000     # then open http://localhost:8000 in Chrome/Edge
 ```
 
-Click **Connect device**, pick the board's serial port, and the page reads the
-stored records over the Web Serial API and decodes the Gen 1 Pokémon **in the
-browser** — sprite, level, HP, moves, OT. See
+Click **Connect device**, pick **"pico_ball vault"** from the WebUSB chooser, and
+the page reads the stored records over **WebUSB** and decodes the Pokémon **in the
+browser** — sprite, level, HP, moves, OT. Works on desktop and Android Chrome. See
 [webui/README.md](webui/README.md).
 
 ## Repository layout
@@ -106,6 +143,7 @@ third_party/               (created by setup.sh) the MIT trade engine we reuse
 - [`weimanc/game-boy-zero-link-board`](https://github.com/weimanc/game-boy-zero-link-board) — the hardware (MIT).
 - [`stacksmashing/gb-link-firmware`](https://github.com/stacksmashing/gb-link-firmware) — RP2040 link‑cable firmware (MIT).
 - [`Lorenzooone/PokemonGB_Online_Trades`](https://github.com/Lorenzooone/PokemonGB_Online_Trades) — the proven, sanity‑checked Gen 1/2/3 trade engine we reuse for Path A (MIT).
+- [`GearsProgress/Poke_Transporter_GB`](https://github.com/GearsProgress/Poke_Transporter_GB) + [`Pokemon-Community-Conversion-Standard`](https://github.com/GearsProgress/Pokemon-Community-Conversion-Standard) — the Gen 1/2 → Gen 3 conversion we vendor + build for the "transfer" feature (MIT).
 - [`kbembedded/Flipper-Zero-Game-Boy-Pokemon-Trading`](https://github.com/kbembedded/Flipper-Zero-Game-Boy-Pokemon-Trading) — proof + reference that the standalone Path B is feasible (MIT).
 
 ## License
