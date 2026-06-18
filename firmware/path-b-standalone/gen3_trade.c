@@ -307,40 +307,69 @@ static void send_value_repeated(uint32_t value) {
 }
 
 // Returns 1 = committed (*given_up = cart slot it gave us), 0 = declined/stopped,
-// -1 = failed/timed out.
-static int commit_inject(uint16_t our_species, int *given_up) {
+// -1 = failed/timed out. `cart_buf` is the cartridge's party section (so we can
+// read the give-away mon's species+PID for the success echo).
+//
+// KEY FIX vs the original port: Gen3-to-GenX (communicator.c process_in_data_gen3)
+// re-validates the low 16 bits of EVERY accept/success word against the trade's
+// species/PID (`if(species_in_gen3 != recv_data) decline`, and the success-round
+// checks against pid_in/out). The engine's _local_inject_commit_gen3 (and our
+// prior port) sent `byte << 16` with zero low bits, so the GBA declined at the
+// final accept (0xB1). We now echo the required payload in each word.
+static int commit_inject(uint16_t our_species, uint32_t our_pid,
+                         const uint8_t *cart_buf, int *given_up) {
     absolute_time_t dl = make_timeout_time_ms(60000);
     const uint8_t idx_vals[7] = {0x80, 0x81, 0x82, 0x83, 0x84, 0x85, TRADE_CANCEL};
     uint32_t sent = wait_for_values(idx_vals, 7, dl);
     if (sent == 0) return -1;
     uint32_t cmd = (sent >> 16) & 0xFF;
     if (cmd == TRADE_CANCEL) return 0;
-    *given_up = (int)(cmd - TRADE_OFFER_START);
+    int gu = (int)(cmd - TRADE_OFFER_START);
+    *given_up = gu;
+
+    // The mon the cartridge is giving us — its species + PID feed the success echo.
+    const uint8_t *recv_mon = cart_buf + TRADING_POKEMON_POS + gu * GEN3_PK3_LEN;
+    uint16_t recv_species = gen3_species(recv_mon);
+    uint32_t recv_pid = u32le(recv_mon, 0);
+    printf("G3I: cart gives slot %d (species %u). Offering our species %u...\n",
+           gu, recv_species, our_species);
 
     // Offer our mon (party slot 0): the species rides in the low bits.
     send_value_repeated(FIRST_TRADE_INDEX | our_species);
 
-    // Two accept rounds, then seven success rounds. NOTE: this faithfully ports
-    // the engine's _local_inject_commit_gen3, but on hardware Gen3-to-GenX always
-    // returns a *decline* at round 1 (0xB1) — same on the PC host (host/inject.py)
-    // — and sending our accept anyway makes the GBA explicitly deny the trade. So
-    // Gen 3 inject does not complete; it's experimental pending a correct port of
-    // the homebrew's partner trade-commit protocol. Capture works fully.
+    // Two accept rounds. The GBA re-checks `species_in_gen3 == recv_data` at each,
+    // so the offered species must ride in the low bits of our accept words too.
     for (int i = 0; i < 2; i++) {
         const uint8_t av[2] = {accept_trade[i], decline_trade[i]};
         uint32_t a = wait_for_values(av, 2, dl);
         if (a == 0) return -1;
-        if (((a >> 16) & 0xFF) == decline_trade[i]) { end_trade(); return 0; }
-        send_value_repeated((uint32_t)accept_trade[i] << 16);
+        if (((a >> 16) & 0xFF) == decline_trade[i]) {
+            printf("G3I: GBA declined at accept round %d (0x%02X)\n",
+                   i, (unsigned)((a >> 16) & 0xFF));
+            end_trade(); return 0;
+        }
+        send_value_repeated(((uint32_t)accept_trade[i] << 16) | our_species);
     }
+    printf("G3I: both accept rounds passed; running success handshake...\n");
 
+    // Seven success rounds: each checks our low 16 bits against, in order, our
+    // species, our PID lo/hi (the mon going INTO the cart), then the cart's
+    // give-away species, its PID lo/hi (the mon coming OUT), then 0.
+    const uint32_t success_payload[7] = {
+        our_species,
+        our_pid & 0xFFFF, (our_pid >> 16) & 0xFFFF,
+        recv_species,
+        recv_pid & 0xFFFF, (recv_pid >> 16) & 0xFFFF,
+        0,
+    };
     bool failed = false;
     for (int i = 0; i < 7; i++) {
         const uint8_t sv[2] = {success_trade[i], FAILED_TRADE};
         uint32_t s = wait_for_values(sv, 2, dl);
         if (s == 0) return -1;
-        if (((s >> 16) & 0xFF) == FAILED_TRADE) failed = true;
-        send_value_repeated((uint32_t)success_trade[i] << 16);
+        if (((s >> 16) & 0xFF) == FAILED_TRADE) { failed = true;
+            printf("G3I: GBA reported FAILED at success round %d\n", i); }
+        send_value_repeated(((uint32_t)success_trade[i] << 16) | success_payload[i]);
     }
     return failed ? -1 : 1;
 }
@@ -362,7 +391,7 @@ int gen3_inject_mon(uint32_t pacing_us, const uint8_t *pk3, uint16_t our_species
     if (!read_section(section, buf)) return -1;
 
     int given_up = -1;
-    int r = commit_inject(our_species, &given_up);
+    int r = commit_inject(our_species, u32le(pk3, 0), buf, &given_up);
     if (r != 1) return r;                   // 0 = declined/stop, -1 = fail
     if (given_up >= 0 && given_up < TRADING_PARTY_MAX) {
         memcpy(received, buf + TRADING_POKEMON_POS + given_up * GEN3_PK3_LEN, GEN3_PK3_LEN);

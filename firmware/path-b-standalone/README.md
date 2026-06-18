@@ -63,13 +63,17 @@ The build bakes the ~248 KB multiboot image into flash. It's generated from the
 (non-redistributed) homebrew, so run `./scripts/setup.sh` once before building so
 `tools/gen_baked_gen3.py` can produce `baked_gen3_mb.c`.
 
-> **Gen 3 injection is experimental and does not currently work.** The code
-> (`gen3_inject_mon`, the `i`/hold-to-inject paths) faithfully ports the engine's
-> `_local_inject_commit_gen3`, but on hardware Gen3-to-GenX returns a *decline* at
-> the trade-commit's round 1 (`0xB1`) — and the **PC host (`host/inject.py --gen 3`)
-> behaves identically** — so the trade never commits (forcing past it makes the GBA
-> explicitly deny). Completing it needs a correct port of the homebrew's partner
-> trade-commit protocol. **Capture is fully working;** inject is left in as a WIP.
+> **Gen 3 injection — fixed, pending a final hardware confirmation.** The earlier
+> decline at the trade-commit's second accept round (`0xB1`) turned out to be a
+> *payload* bug inherited from the engine's `_local_inject_commit_gen3`: it sent
+> the accept/success words as `byte << 16` with empty low bits, but Gen3-to-GenX
+> (`process_in_data_gen3`) re-checks the low 16 bits of every accept/success word
+> against the trade's species/PID and declines on any mismatch. `commit_inject`
+> now echoes the required payload — the offered species in both accept rounds, then
+> `{our species, our PID lo/hi, the cart's give-away species, its PID lo/hi, 0}`
+> across the seven success rounds. It builds and is flashed; validate on hardware
+> (multiboot Gen3-to-GenX, reach its trade screen, then `i <slot>`). The board logs
+> each `G3I:` step. Capture has always worked.
 
 **Capturing Crystal:** hold to switch to Gen 2 (idle LED → purple), sit at the
 Trade Center table (the game will say "your friend is not ready" — that's normal
