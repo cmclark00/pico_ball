@@ -85,6 +85,35 @@ echo "    copied multiboot image to webui/ (for the WebUI Gen 3 path)"
 python3 tools/gen_baked_gen3.py >/dev/null && \
   echo "    generated firmware baked_gen3_mb.c (standalone Gen 3 multiboot)"
 
+# --- Gen 1/2 -> Gen 3 conversion (Poke Transporter GB / PCCS) -----------------
+# The Pokemon Community Conversion Standard recreates a Gen 1/2 mon as a legal
+# Gen 3 .pk3 (Pal-Park style). We vendor it (pinned, MIT) and build a small host
+# CLI; import_standalone.py uses it to emit .pk3 alongside captured Gen 1/2 mons.
+PCCS_URL="https://github.com/GearsProgress/Pokemon-Community-Conversion-Standard.git"
+PCCS_COMMIT="db430d84c27bf196ab61e07d4b4588ddc093da08"
+PCCS_DIR="third_party/PCCS"
+echo "==> Conversion standard ($PCCS_DIR @ ${PCCS_COMMIT:0:9})"
+if [ -d "$PCCS_DIR/.git" ]; then
+  git -C "$PCCS_DIR" fetch --quiet origin "$PCCS_COMMIT" 2>/dev/null || \
+    git -C "$PCCS_DIR" fetch --quiet origin
+  git -C "$PCCS_DIR" checkout --quiet "$PCCS_COMMIT"
+elif [ -e "$PCCS_DIR" ] && [ -n "$(ls -A "$PCCS_DIR" 2>/dev/null)" ]; then
+  echo "    $PCCS_DIR exists but isn't a git checkout — leaving as-is"
+else
+  git clone --quiet "$PCCS_URL" "$PCCS_DIR"
+  git -C "$PCCS_DIR" checkout --quiet "$PCCS_COMMIT"
+fi
+if command -v c++ >/dev/null 2>&1 && command -v make >/dev/null 2>&1; then
+  if bash tools/build_pccs.sh >/dev/null 2>&1; then
+    echo "    built pccs_convert (Gen 1/2 -> Gen 3)"
+  else
+    echo "    WARNING: pccs_convert build failed — Gen 3 transfer will be disabled."
+    echo "             Re-run: bash tools/build_pccs.sh"
+  fi
+else
+  echo "    skipped build: need a C++ compiler + make. Gen 3 transfer disabled."
+fi
+
 cat <<'EOF'
 
 ==> Done.

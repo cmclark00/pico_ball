@@ -8,8 +8,13 @@ The vault firmware is a WebUSB vendor-class device (VID 0x2E8A) with no CDC seri
 This sends the 'd' (dump) command over the vendor bulk endpoints, reads the hex
 records, parses each with the proven engine, and saves them under vault/dex/.
 
+Gen 1/2 mons are also converted to Gen 3 .pk3 files (PKHeX-importable) under
+vault/dex/gen3/ when the PCCS converter is built (scripts/setup.sh) -- a
+Pal-Park-style recreation, mirroring Poke Transporter GB. See host/picovault/pccs.py.
+
 Usage:
     python host/import_standalone.py        # auto-detect the board (2E8A vendor)
+    python host/import_standalone.py --no-gen3-transfer   # skip the Gen 3 conversion
 """
 import argparse
 import os
@@ -20,7 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from picovault import engine, savedata  # noqa: E402
+from picovault import engine, savedata, pccs  # noqa: E402
 
 PICO_VID = 0x2E8A  # Raspberry Pi (the vault firmware's VID)
 
@@ -112,11 +117,28 @@ def _save_mon(traders, gen, rec, vault_dir):
         party, 0, vault_dir, engine.ENGINE_DIR, prefix="dex", gen=gen)
 
 
+def _save_gen3_transfer(gen, rec, pk1_path):
+    """Convert a Gen 1/2 record to a Gen 3 .pk3 (PKHeX-importable) and write it
+    under <dex>/gen3/. Returns the .pk3 path, or None if skipped/rejected."""
+    pk3 = pccs.convert_record(gen, rec)
+    if pk3 is None:
+        return None
+    stem = os.path.splitext(os.path.basename(pk1_path))[0]
+    gen3_dir = os.path.join(os.path.dirname(pk1_path), "gen3")
+    os.makedirs(gen3_dir, exist_ok=True)
+    out = os.path.join(gen3_dir, stem + ".pk3")
+    with open(out, "wb") as fh:
+        fh.write(pk3)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--out", default=os.path.join(REPO_ROOT, "vault"))
+    ap.add_argument("--no-gen3-transfer", action="store_true",
+                    help="don't also convert Gen 1/2 mons to Gen 3 .pk3 (PCCS)")
     args = ap.parse_args()
 
     try:
@@ -131,7 +153,13 @@ def main():
             print("No dex entries returned. Has the board captured anything yet?")
             return 1
 
+        transfer = not args.no_gen3_transfer and pccs.available()
+        if not args.no_gen3_transfer and not pccs.available():
+            print("(Gen 3 transfer skipped: PCCS converter not built. "
+                  "Run scripts/setup.sh to enable it.)")
+
         out_dir = os.path.join(os.path.abspath(args.out), "dex")
+        n_transfer = 0
         with engine.engine_cwd():
             traders = {}
             for g in (1, 2, 3):
@@ -141,10 +169,24 @@ def main():
             for gen, species, rec in records:
                 try:
                     path = _save_mon(traders, gen, rec, out_dir)
-                    print(f"  Gen {gen} #{species:<3} -> {os.path.basename(path)}")
+                    line = f"  Gen {gen} #{species:<3} -> {os.path.basename(path)}"
+                    if transfer and gen in (1, 2):
+                        try:
+                            pk3_path = _save_gen3_transfer(gen, rec, path)
+                            if pk3_path:
+                                line += f"  +gen3/{os.path.basename(pk3_path)}"
+                                n_transfer += 1
+                            else:
+                                line += "  (gen3: not convertible)"
+                        except Exception as exc:  # noqa: BLE001
+                            line += f"  (gen3 convert failed: {exc})"
+                    print(line)
                 except Exception as exc:  # noqa: BLE001
                     print(f"  Gen {gen} #{species:<3} -> skipped ({exc})")
-        print(f"\nSaved {len(records)} dex Pokémon into {out_dir}.")
+        msg = f"\nSaved {len(records)} dex Pokémon into {out_dir}."
+        if transfer:
+            msg += f" Converted {n_transfer} to Gen 3 (.pk3 in {out_dir}/gen3/)."
+        print(msg)
         return 0
     except RuntimeError as exc:
         print(f"\nError: {exc}", file=sys.stderr)
