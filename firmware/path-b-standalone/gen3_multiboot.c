@@ -125,5 +125,9 @@ bool gen3_multiboot(uint32_t pacing_us) {
 }
 
 bool ptgb_multiboot(uint32_t pacing_us) {
+    if (ptgb_mb_fsize == 0) {   // stub build (no ROM baked in — e.g. a CI artifact)
+        printf("PTGB: not baked into this build (build locally with tools/build_ptgb.sh)\n");
+        return false;
+    }
     return gba_multiboot(ptgb_mb_image, ptgb_mb_fsize, pacing_us);
 }
