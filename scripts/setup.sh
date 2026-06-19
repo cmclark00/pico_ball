@@ -119,9 +119,13 @@ fi
 # GBA and offers a stored Gen 1/2 mon to it. Building PTGB needs devkitARM; if it's
 # missing we skip it — the prebuilt firmware already has PTGB baked in.
 echo "==> Poke Transporter GB multiboot ROM (third_party/ptgb)"
+# PTGB needs the full devkitPro GBA toolchain (gba_rules + libtonc), not just an
+# arm-none-eabi compiler — so gate on the devkitARM marker. CI has the bare
+# compiler but not devkitPro, so it skips straight to the stub below.
+DEVKITARM_DIR="${DEVKITARM:-/opt/devkitpro/devkitARM}"
 if [ -f third_party/ptgb/poke_transporter_gb_mb.gba ]; then
   echo "    already present"
-elif command -v arm-none-eabi-gcc >/dev/null 2>&1 || [ -x "${DEVKITARM:-/opt/devkitpro/devkitARM}/bin/arm-none-eabi-gcc" ]; then
+elif [ -f "$DEVKITARM_DIR/gba_rules" ]; then
   if bash tools/build_ptgb.sh >/dev/null 2>&1; then
     echo "    built poke_transporter_gb_mb.gba"
   else
@@ -129,12 +133,13 @@ elif command -v arm-none-eabi-gcc >/dev/null 2>&1 || [ -x "${DEVKITARM:-/opt/dev
     echo "             to rebuild firmware from source, run: bash tools/build_ptgb.sh"
   fi
 else
-  echo "    skipped: devkitARM not found. The prebuilt firmware already has PTGB baked in."
+  echo "    skipped: devkitPro (GBA toolchain) not found — the firmware builds with a"
+  echo "    PTGB stub; the committed prebuilt already has the real ROM baked in."
 fi
-if [ -f third_party/ptgb/poke_transporter_gb_mb.gba ]; then
-  python3 tools/gen_baked_ptgb.py >/dev/null && \
-    echo "    generated firmware baked_ptgb_mb.c (standalone Gen 1/2 -> Gen 3 transfer)"
-fi
+# Always (re)generate baked_ptgb_mb.c so the firmware builds even without the ROM:
+# gen_baked_ptgb.py writes a stub (ptgb_mb_fsize=0) when third_party/ptgb is empty.
+python3 tools/gen_baked_ptgb.py >/dev/null && \
+  echo "    generated firmware baked_ptgb_mb.c (standalone Gen 1/2 -> Gen 3 transfer)"
 
 cat <<'EOF'
 
