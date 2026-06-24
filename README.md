@@ -51,24 +51,30 @@ Pokémon actually gets **stored** is a software choice:
 # 3. Plug board -> laptop (USB) and board -> GBA link port. Boot Pokémon Blue,
 #    go to a Pokémon Center -> Cable Club -> Trade Center, sit at the table.
 
-# 4. Copy your party into the vault (non-destructive):
-source host/.venv/bin/activate
-python host/extract.py          # saves vault/*.pk1 + vault/*.json, then cancels
-python host/extract.py --gen 2  #   ...or Gold/Silver/Crystal (Gen 2)
+# 4. Copy your party into the vault (non-destructive). The ./pb launcher runs
+#    the host tools in the project venv, so there's nothing to activate:
+./pb extract              # saves vault/*.pk1 + vault/*.json, then cancels
+./pb extract --gen 2      #   ...or Gold/Silver/Crystal (Gen 2 -> *.pk2)
 
 # Gen 3 (Ruby/Sapphire/Emerald/FireRed/LeafGreen): flash the reconfigurable
 # firmware (third_party/gen3/gbusb_reconfigurable.uf2), then multiboot the
 # GBA-side trade program and capture:
-python host/gen3_boot.py        # upload Gen3-to-GenX into the GBA's RAM
-python host/extract.py --gen 3  # saves vault/*.pk3 (PKHeX party format)
+./pb gen3-boot            # upload Gen3-to-GenX into the GBA's RAM
+./pb extract --gen 3      # saves vault/*.pk3 (PKHeX party format)
 
-# 5. (Optional) Trade a vaulted Pokémon back INTO a cartridge:
-python host/inject.py           # pick a vault mon; the cart's given-up mon is
-                                # auto-saved to the vault, so nothing is lost
+# 5. See what you've captured (no device needed):
+./pb list                 # decoded table: gen, species, level, OT, nickname
 
-# 6. (Optional) Export your captures as a Gen 1 .sav (opens in PKHeX/emulators):
-python host/export_sav.py       # -> vault/pico_ball.sav
+# 6. (Optional) Trade a vaulted Pokémon back INTO a cartridge:
+./pb inject               # pick from a decoded list; the cart's given-up mon is
+                          # auto-saved to the vault, so nothing is lost
+
+# 7. (Optional) Export your captures as a .sav (opens in PKHeX/emulators):
+./pb export-sav           # Gen 1 -> vault/pico_ball.sav  (--gen 2 for G/S/C)
 ```
+
+> Prefer the raw scripts? Every `./pb <cmd>` maps to `python host/<cmd>.py`
+> after `source host/.venv/bin/activate` — the launcher just saves the typing.
 
 See **[docs/PLAN.md](docs/PLAN.md)** for the full phased plan, and
 **[docs/research.md](docs/research.md)** for everything the design is based on

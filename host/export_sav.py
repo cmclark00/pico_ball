@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from picovault import engine  # noqa: E402
+from picovault import engine, savedata  # noqa: E402
 
 # US/International Gen 1 save offsets (Bulbapedia / PKHeX SAV1).
 SAV_SIZE = 0x8000
@@ -168,7 +168,9 @@ def party_from_pk1s(trader, files):
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("pk1", nargs="*", help="record files (default: vault/party0*.pk1)")
+    ap.add_argument("pk1", nargs="*",
+                    help="record files (default: vault/party0*.pk1 for Gen 1, "
+                         ".pk2/.pk1 for Gen 2)")
     ap.add_argument("--gen", type=int, choices=(1, 2), default=1,
                     help="game generation: 1 = R/B/Y, 2 = G/S/C")
     ap.add_argument("--game", choices=("c", "gs"), default="c",
@@ -176,10 +178,24 @@ def main():
     ap.add_argument("--out", default=os.path.join(REPO_ROOT, "vault", "pico_ball.sav"))
     args = ap.parse_args()
 
-    files = args.pk1 or sorted(glob.glob(os.path.join(REPO_ROOT, "vault", "party0*.pk1")))
+    if args.pk1:
+        files = args.pk1
+    else:
+        vault = os.path.join(REPO_ROOT, "vault")
+        pats = ("party0*.pk2", "party0*.pk1") if args.gen == 2 else ("party0*.pk1",)
+        files = sorted({p for pat in pats for p in glob.glob(os.path.join(vault, pat))})
     if not files:
         print("No record files. Run extract.py first, or pass files.", file=sys.stderr)
         return 2
+
+    # Warn (don't block) if a file's apparent gen doesn't match --gen: a .sav is
+    # gen-specific, so a Gen 1 record won't build a valid Gen 2 party and vice versa.
+    for f in files:
+        rgen = savedata.infer_gen(f)
+        if rgen and rgen != args.gen:
+            print(f"Warning: {os.path.basename(f)} looks like a Gen {rgen} record "
+                  f"but --gen {args.gen} was given; the .sav may be wrong.",
+                  file=sys.stderr)
 
     with engine.engine_cwd():
         if args.gen == 2:

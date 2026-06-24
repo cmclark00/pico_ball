@@ -8,6 +8,7 @@ For each Pokémon we write:
   * partyNN_<name>.json  -- decoded summary
 and a combined party.json.
 """
+import datetime
 import json
 import os
 
@@ -119,10 +120,38 @@ def _decode_mon(mon, names, gen=1):
     return info
 
 
-_RECORD_EXT = {1: ".pk1", 2: ".pk1", 3: ".pk3"}  # gen 2 kept as .pk1 (legacy)
+_RECORD_EXT = {1: ".pk1", 2: ".pk2", 3: ".pk3"}
+
+# Record file sizes (bytes) -> generation, for best-effort gen inference and the
+# gen/record mismatch warning. Mirrors the WebUI's length-based detection.
+# Gen 1 = 66 (44 struct + 11 OT + 11 nick); Gen 2 = 70 (no mail) or 117 (mail);
+# Gen 3 .pk3 file = 100 (the PKHeX party struct).
+_LEN_GEN = {66: 1, 70: 2, 117: 2, 100: 3}
+
+
+def record_ext(gen):
+    """The vault file extension for a generation (.pk1/.pk2/.pk3)."""
+    return _RECORD_EXT.get(gen, ".pk1")
+
+
+def infer_gen(path):
+    """Best-effort generation of a vault record. Length is authoritative when
+    recognised (it disambiguates legacy Gen 2 files saved as .pk1); otherwise
+    fall back to the extension. Returns an int gen or None if unknown."""
+    try:
+        n = os.path.getsize(path)
+    except OSError:
+        n = None
+    if n in _LEN_GEN:
+        return _LEN_GEN[n]
+    return {".pk1": 1, ".pk2": 2, ".pk3": 3}.get(os.path.splitext(path)[1].lower())
 
 
 def _write_record(info, vault_dir, stem, gen=1):
+    # Stamp when this record was saved (local time), so the WebUI/`vault list`
+    # can show a capture date. On the standalone deck the device RTC could
+    # supply this instead; here it's the host clock at save time.
+    info.setdefault("captured", datetime.datetime.now().isoformat(timespec="seconds"))
     ext = _RECORD_EXT.get(gen, ".pk1")
     rec_path = os.path.join(vault_dir, stem + ext)
     with open(rec_path, "wb") as fh:
@@ -157,12 +186,19 @@ def save_party(party, vault_dir, engine_dir, gen=1):
     names = _load_species_names(engine_dir, gen)
     size = party.get_party_size()
 
+    ext = record_ext(gen)
     summary = {"party_size": size, "pokemon": []}
     written = []
     for i in range(size):
         mon = party.pokemon[i]
         info = _decode_mon(mon, names, gen=gen)
-        stem = f"party{i:02d}_{_safe(info['species_name'])}"
+        # Never overwrite an earlier capture: if the stem is taken, add a
+        # numeric suffix (same policy as save_party_member).
+        base_stem = f"party{i:02d}_{_safe(info['species_name'])}"
+        stem, n = base_stem, 1
+        while os.path.exists(os.path.join(vault_dir, stem + ext)):
+            stem = f"{base_stem}_{n}"
+            n += 1
         _write_record(info, vault_dir, stem, gen=gen)
         summary["pokemon"].append(info)
         written.append((stem, info))

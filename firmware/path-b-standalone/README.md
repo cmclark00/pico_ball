@@ -168,7 +168,7 @@ device at a time, so close the WebUI tab before running `import_standalone.py`
 | `P` | multiboot Poke Transporter GB into the GBA (Gen 1/2 → Gen 3 transfer; optional `P <us>`) |
 | `o` or `o <n>` | offer dex slot n to PTGB as a trade (default: last; Gen 1/2 only) |
 | `r <n>` | delete dex slot n |
-| `w` | wipe the whole vault |
+| `w!` | wipe the whole vault (`w` arms, `!` confirms — a stray `w` is harmless) |
 | `B` | reboot into BOOTSEL (drag-and-drop a new `.uf2`) |
 
 `import_standalone.py` saves each dex entry as a `.pk1`/`.pk2`/`.pk3` + `.json` in
