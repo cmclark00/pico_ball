@@ -93,7 +93,7 @@ def capture(vault_dir, verbose, sanity, gen):
             # Cancel: signal stop_trade and let the player back out in-game.
             _cancel(trader, gen)
 
-        ext = ".pk3" if gen == 3 else ".pk1"
+        ext = savedata.record_ext(gen)
         print(f"\nCaptured {len(written)} Pokémon into {vault_dir}:")
         for stem, info in written:
             lvl = info.get("level")

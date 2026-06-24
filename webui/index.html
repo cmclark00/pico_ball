@@ -615,7 +615,7 @@ function deleteRecord(i) {
 function wipeAll() {
   if (!confirm("Erase ALL captures stored on the device? This cannot be undone.")) return;
   return withBusy("Wiping…", async () => {
-    await sendCommand("w", l => l.startsWith("WIPED"), 8000);
+    await sendCommand("w!", l => l.startsWith("WIPED"), 8000);
     await dump();
   });
 }

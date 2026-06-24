@@ -90,7 +90,8 @@ The page loads the ~248 KB multiboot image (`pokemon_gen3_to_genx_mb.gba`) from
 > exchange). The captured 100-byte structs are the same `.pk3` records the Python
 > tool writes, decoded by `pokedata_gen3.js`.
 
-These use simple text commands (`a` capture, `r<n>` delete, `w` wipe) over the
+These use simple text commands (`a` capture, `r<n>` delete, `w!` wipe — the `w`
+arms and the `!` confirms, so a stray `w` can't erase the vault) over the
 WebUSB vendor channel; the firmware prints machine-readable markers
 (`CAPTURE_RESULT …`, `DELETED …`, `WIPED …`) that the page waits on.
 

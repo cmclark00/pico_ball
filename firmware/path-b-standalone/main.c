@@ -10,7 +10,7 @@
 //   'i' <n>  -> inject slot n (omit n to inject most recently captured) back into a cartridge
 //   '1'/'2'  -> select generation (1 = R/B/Y, 2 = G/S/C) for the next operation
 //   'r' <n>  -> delete record n (digits terminated by newline)
-//   'w'      -> wipe the whole vault
+//   'w!'     -> wipe the whole vault ('w' arms, '!' confirms)
 //
 // Button gestures:
 //   Tap        -> capture (current gen)
@@ -34,6 +34,7 @@ static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
 static int inject_slot = 0; // which dex slot to inject (default: slot 0; USB 'i <n>' overrides, -1 = most recent)
+static bool wipe_armed = false; // 'w' arms; '!' confirms (guards the flash erase)
 
 static void dump_all(void) {
     int n = storage_count();
@@ -357,6 +358,8 @@ static void run_ptgb_offer(int slot, uint32_t pace) {
 
 static void handle_serial(void) {
     int ch = getchar_timeout_us(0);
+    // Any command other than the wipe handshake disarms a pending wipe.
+    if (ch != PICO_ERROR_TIMEOUT && ch != 'w' && ch != '!') wipe_armed = false;
     switch (ch) {
         case 'd': dump_all(); break;
         case 'c': printf("COUNT %d/%d\n", storage_count(), storage_capacity()); break;
@@ -394,7 +397,14 @@ static void handle_serial(void) {
             break;
         }
         case 'B': printf("BOOTSEL\n"); sleep_ms(50); reset_usb_boot(0, 0); break;
-        case 'w': storage_wipe(); printf("WIPED %d\n", storage_count()); break;
+        case 'w':
+            wipe_armed = true;
+            printf("WIPE? send '!' to confirm (any other key cancels)\n");
+            break;
+        case '!':
+            if (wipe_armed) { storage_wipe(); printf("WIPED %d\n", storage_count()); }
+            wipe_armed = false;
+            break;
         case 'r': {
             int n = read_uint();
             bool ok = (n >= 0) && storage_delete(n);
@@ -415,7 +425,7 @@ int main(void) {
            "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject slot 0 (USB 'i n' picks)\n"
            "Gen 3: tap multiboots the GBA, then (on its trade screen) tap again to capture.\n"
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
-           "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w'=wipe\n"
+           "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w!'=wipe\n"
            "        'P'=multiboot Poke Transporter GB  'o [n]'=send Gen 1/2 mon to it (-> Gen 3 cart)\n"
            "Current: Gen %d. Cross-gen injection supported (Gen 1<->2).\n",
            storage_count(), storage_capacity(), current_gen);

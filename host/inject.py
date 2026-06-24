@@ -28,24 +28,77 @@ from picovault.usb_link import UsbLink  # noqa: E402
 from picovault import engine, savedata  # noqa: E402
 
 
+def _record_label(path):
+    """A short human description of a record from its sibling JSON, e.g.
+    'Pikachu Lv5 (OT COREY)  [Gen 1]'. Falls back to the filename."""
+    gen = savedata.infer_gen(path)
+    tag = f"Gen {gen}" if gen else "Gen ?"
+    json_path = os.path.splitext(path)[0] + ".json"
+    if os.path.isfile(json_path):
+        try:
+            import json
+            with open(json_path, encoding="utf-8") as fh:
+                info = json.load(fh)
+            sp = info.get("species_name") or "?"
+            lv = info.get("level")
+            ot = info.get("ot_name") or ""
+            nick = info.get("nickname") or ""
+            lvs = f" Lv{lv}" if lv is not None else ""
+            nicks = f' "{nick}"' if nick and nick.lower() != sp.lower() else ""
+            ots = f" (OT {ot})" if ot else ""
+            return f"{sp}{lvs}{nicks}{ots}  [{tag}]"
+        except (OSError, ValueError):
+            pass
+    return f"{os.path.basename(path)}  [{tag}]"
+
+
 def _pick_record(path_arg, vault_dir, gen):
     if path_arg:
         if not os.path.isfile(path_arg):
             raise RuntimeError(f"No such file: {path_arg}")
         return path_arg
-    ext = "*.pk3" if gen == 3 else "*.pk1"
-    recs = sorted(glob.glob(os.path.join(vault_dir, ext)))
+    if gen == 3:
+        pats = ("*.pk3",)
+    elif gen == 2:
+        pats = ("*.pk2", "*.pk1")    # .pk1 = legacy Gen 2 (or a Gen 1 mon for the Time Capsule)
+    else:
+        pats = ("*.pk1",)
+    recs = sorted({p for pat in pats for p in glob.glob(os.path.join(vault_dir, pat))})
+
+    def _eligible(p):
+        g = savedata.infer_gen(p)
+        if gen == 1:
+            return g in (1, None)
+        if gen == 2:
+            return g in (1, 2, None)  # allow a Gen 1 mon (Time Capsule)
+        return g in (3, None)
+    recs = [p for p in recs if _eligible(p)]
+
     if not recs:
         raise RuntimeError(
-            f"No {ext} records in {vault_dir}. Capture some first with extract.py."
+            f"No Gen {gen} records in {vault_dir}. Capture some first with extract.py."
         )
     print("Vaulted Pokémon:")
     for i, p in enumerate(recs):
-        print(f"  [{i}] {os.path.basename(p)}")
+        print(f"  [{i}] {_record_label(p)}")
     sel = input("Inject which number? ").strip()
     if not sel.isdigit() or int(sel) >= len(recs):
         raise RuntimeError("Invalid selection.")
     return recs[int(sel)]
+
+
+def _warn_mismatch(record_path, gen):
+    """Warn (but don't block) if the chosen record's apparent gen differs from
+    the target game's gen — cross-gen trades are legitimate (Time Capsule)."""
+    rgen = savedata.infer_gen(record_path)
+    if rgen and rgen != gen:
+        print(
+            f"Note: {os.path.basename(record_path)} looks like a Gen {rgen} record "
+            f"but --gen {gen} was given.\n"
+            f"      Proceeding — cross-gen trades are valid (e.g. Gen 1<->2 Time "
+            f"Capsule). Ctrl-C to abort.",
+            file=sys.stderr,
+        )
 
 
 def _load_record(record_path, gen):
@@ -131,7 +184,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("record", nargs="?",
-                    help="path to a .pk1/.pk3 record in the vault")
+                    help="path to a .pk1/.pk2/.pk3 record in the vault")
     ap.add_argument("--out", default=os.path.join(REPO_ROOT, "vault"),
                     help="vault dir for the given-up Pokémon (default: ./vault)")
     ap.add_argument("--no-sanity", dest="sanity", action="store_false",
@@ -144,6 +197,7 @@ def main():
     try:
         vault_dir = os.path.abspath(args.out)
         record = _pick_record(args.record, vault_dir, args.gen)
+        _warn_mismatch(record, args.gen)
         return inject(record, vault_dir, args.verbose, args.sanity, args.gen)
     except RuntimeError as exc:
         print(f"\nError: {exc}", file=sys.stderr)
