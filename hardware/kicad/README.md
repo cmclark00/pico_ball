@@ -36,9 +36,15 @@ remaining ~20 easy nets around them.
   (both 5V pads + both adjacent GND pads, 2.2 mm bottom copper) — whichever
   pads the PiSugar's pins actually touch, they hit the right net. I2C pogo
   pins contact the underside of header pins 3/5 (through-hole pads).
-- J1 link tab copied 1:1 from the proven weimanc board: 6.5 mm wide tab,
-  6.5 mm protrusion, connector 3.5 mm out from the body edge, same pad→net
-  map (1=GBVCC 2=SO 3=SI 4=SD 5=SC 6=GND).
+- J1 link tab machine-diffed against the proven weimanc board's J1
+  (`gb-link-socket`, the small GBC-plug tab): congruent in every dimension —
+  6.5 mm wide tab, 6.5 mm protrusion, pad centers 3.5 mm from the body edge
+  / 3.0 mm from the tip, 1×5 mm pads at 2 mm pitch, 3 contacts per face,
+  same pad→net map (1=GBVCC 2=SO 3=SI 4=SD 5=SC 6=GND). A no-pour rule area
+  keeps the GND zones off the tab (matching the reference; the plug slides
+  over it). Note the weimanc board also carries a second, larger
+  `dmg-link-socket` tab (2×8 mm pads at 2.5/2.6 mm pitch) for the original
+  DMG plug — this board only has the small-plug tab.
 - Link stays on GP0/1/2(/3) through the BOB-12009 — matches
   `firmware/path-b-standalone/gb_link.c` unchanged.
 - Pad positions machine-audited (all inside outline, USB end at right edge,
@@ -71,11 +77,15 @@ remaining ~20 easy nets around them.
 ## Remaining work before fab
 
 1. ~~Route it~~ ✅ routed, DRC clean (see pipeline above).
-2. Sanity-check the tab against a real link cable plug (dry fit a printout).
+2. ~~Sanity-check the tab~~ ✅ machine-diffed against the weimanc board's
+   small-plug tab — congruent (see above). Still worth one physical dry fit.
 3. Optional: draw the schematic to match (the netlist source of truth is
    `generate_board.py`).
-4. Generate gerbers: `kicad-cli pcb export gerbers` + `drill` (same Docker
-   image), zip, upload to JLCPCB.
+4. ~~Generate gerbers~~ ✅ `pico-ball-deck-rev-a-gerbers.zip` (9 layers +
+   Excellon drill + map, Protel extensions — upload straight to JLCPCB).
+   Regenerate with `kicad-cli pcb export gerbers/drill` in the same Docker
+   image; `add_tab_keepout.py` documents the tab rule area (now also baked
+   into `import_ses.py`).
 
 Note: the copper-to-edge DRC rule is 0.25 mm (JLC's minimum for routed
 edges is 0.2 mm); net clearance is 0.25 mm everywhere, power nets 0.5 mm

@@ -11,6 +11,26 @@ print("SES import:", "OK" if ok else "FAILED")
 if not ok:
     raise SystemExit(1)
 
+# Keep pours off the J1 link tab (the plug slides over it; the proven weimanc
+# board keeps its tab copper-free past the base). Tab: x 43.5..50, y 61.75..68.25.
+ko = pcbnew.ZONE(board)
+ko.SetIsRuleArea(True)
+ko.SetDoNotAllowCopperPour(True)
+ko.SetDoNotAllowTracks(False)
+ko.SetDoNotAllowVias(False)
+ko.SetDoNotAllowPads(False)
+ko.SetDoNotAllowFootprints(False)
+ko.SetZoneName("link_tab_no_pour")
+ls = pcbnew.LSET()
+ls.AddLayer(pcbnew.F_Cu)
+ls.AddLayer(pcbnew.B_Cu)
+ko.SetLayerSet(ls)
+ko_outline = ko.Outline()
+ko_outline.NewOutline()
+for x, y in ((42.0, 61.0), (50.0, 61.0), (50.0, 69.0), (42.0, 69.0)):
+    ko_outline.Append(pcbnew.VECTOR2I(pcbnew.FromMM(x), pcbnew.FromMM(y)))
+board.Add(ko)
+
 # GND pour on both layers, covering the whole outline (zone clips to Edge.Cuts
 # minus edge clearance automatically at fill time via the board's outline).
 gnd = board.GetNetsByName()["GND"]
@@ -42,6 +62,11 @@ for layer in (pcbnew.F_Cu, pcbnew.B_Cu):
 
 filler = pcbnew.ZONE_FILLER(board)
 filler.Fill(board.Zones())
+
+# Footprints copied from the reference repo embed 3D model paths that don't
+# exist here (one is an absolute Windows path) -> KiCad warns on every open.
+for fp in board.GetFootprints():
+    fp.Models().clear()
 
 pcbnew.SaveBoard(PCB, board)
 print("saved", PCB)

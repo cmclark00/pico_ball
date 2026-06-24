@@ -30,3 +30,8 @@ $KICAD python3 import_ses.py
 echo "== 5/5 DRC =="
 $KICAD kicad-cli pcb drc --severity-error -o drc.rpt pico-ball-deck.kicad_pcb || true
 grep -E "Found" drc.rpt
+
+# KiCad 8 (container) writes a .kicad_prl whose visible_items IDs KiCad 9/10
+# misread as "hide tracks/pads/zones" -> board opens looking empty. Delete it;
+# the GUI regenerates a correct one with everything visible.
+rm -f pico-ball-deck.kicad_prl
