@@ -12,7 +12,7 @@ const GEN1 = {
   gen: 1, namesKey: "SPECIES_NAMES", typesKey: "TYPES_G1", spriteSet: "red-blue",
   sec1: [10, 418], sec2: [428, 197],
   countPos: 0x0B, monPos: 0x13, monLen: 0x2C, otPos: 0x11B, nickPos: 0x15D, nameLen: 0x0B,
-  curHp: 1, maxHp: 0x22, moves: 8, pp: 0x1D, otId: 0x0C, level: 0x21, dv: 0x1B,
+  curHp: 1, maxHp: 0x22, moves: 8, pp: 0x1D, otId: 0x0C, level: 0x21, dv: 0x1B, exp: 0x0E,
   stats: [["HP", 0x22], ["ATK", 0x24], ["DEF", 0x26], ["SPD", 0x28], ["SPC", 0x2A]],
 };
 const GEN2 = {
@@ -20,12 +20,32 @@ const GEN2 = {
   sec1: [10, 444], sec2: [454, 197],
   countPos: 0x0B, monPos: 0x15, monLen: 0x30, otPos: 0x135, nickPos: 0x177, nameLen: 0x0B,
   itemPos: 1, curHp: 0x22, maxHp: 0x24, moves: 2, pp: 0x17, otId: 6, level: 0x1F, dv: 0x15,
+  exp: 0x08, happy: 0x1B,
   stats: [["HP", 0x24], ["ATK", 0x26], ["DEF", 0x28], ["SPD", 0x2A], ["SpA", 0x2C], ["SpD", 0x2E]],
 };
 function layoutFor(len) { return len >= 1036 ? GEN2 : GEN1; }
 
 // Species (by name) that evolve when traded (Gen 1 + the always-trade Gen 2 ones).
 const TRADE_EVOLVERS = new Set(["Kadabra", "Machoke", "Graveler", "Haunter"]);
+
+// Gen 3 natures (index = PID % 25). Each non-neutral nature raises one stat 10%
+// and lowers another; the raised stat = floor(n/5), lowered = n%5, indexing
+// [Atk, Def, Spd, SpA, SpD]. Neutral when they match.
+const NATURE_NAMES = [
+  "Hardy", "Lonely", "Brave", "Adamant", "Naughty",
+  "Bold", "Docile", "Relaxed", "Impish", "Lax",
+  "Timid", "Hasty", "Serious", "Jolly", "Naive",
+  "Modest", "Mild", "Quiet", "Bashful", "Rash",
+  "Calm", "Gentle", "Sassy", "Careful", "Quirky",
+];
+const NATURE_STATS = ["Atk", "Def", "Spd", "SpA", "SpD"];
+function natureEffect(n) {
+  const inc = Math.floor(n / 5), dec = n % 5;
+  return inc === dec ? "" : ` (+${NATURE_STATS[inc]} -${NATURE_STATS[dec]})`;
+}
+
+// 3-byte big-endian (Gen 1/2 experience).
+function u24be(b, o) { return (b[o] << 16) | (b[o + 1] << 8) | b[o + 2]; }
 
 function u16(b, o) { return (b[o] << 8) | b[o + 1]; }
 
@@ -100,6 +120,8 @@ function decodeMon(m, otB, nickB, L) {
     otName: gbText(otB),
     otId: u16(m, L.otId),
     level: m[L.level],
+    exp: u24be(m, L.exp),
+    happiness: L.happy !== undefined ? m[L.happy] : null,
     heldItem, heldItemName, shiny, gender,
     hp: u16(m, L.curHp),
     maxHp: u16(m, L.maxHp),
@@ -214,6 +236,18 @@ function decodeMonG3(bytes) {
     hp: ivWord & 31, atk: (ivWord >>> 5) & 31, def: (ivWord >>> 10) & 31,
     spd: (ivWord >>> 15) & 31, spa: (ivWord >>> 20) & 31, spdef: (ivWord >>> 25) & 31,
   };
+  // Ability: bit 31 selects slot 0/1; name from the (separately baked) table,
+  // keyed by internal species id (Gen-3-accurate pairings).
+  const abilitySlot = (ivWord >>> 31) & 1;
+  const abilityPair = (globalThis.ABILITIES_G3 || [])[species];
+  const ability = abilityPair ? (abilityPair[abilitySlot] || abilityPair[0]) : "";
+
+  // Effort values (the evs substructure, 6 bytes: HP/Atk/Def/Spd/SpA/SpD).
+  const evSpread = { hp: evs[0], atk: evs[1], def: evs[2],
+                     spd: evs[3], spa: evs[4], spdef: evs[5] };
+  const nature = pid % 25;
+  const exp = u32le(growth, 4);
+  const happiness = growth[9];
 
   const tid = otid & 0xFFFF, sid = otid >>> 16;
   const shiny = ((tid ^ sid ^ (pid >>> 16) ^ (pid & 0xFFFF)) & 0xFFFF) < 8;
@@ -234,15 +268,19 @@ function decodeMonG3(bytes) {
     .map(([label, off]) => ({ label, val: u16le(bytes, off) }));
 
   return {
-    gen: 3, spriteSet: "emerald", species, name, nickname,
+    gen: 3, spriteSet: "emerald", species, national, name, nickname,
     otName: g3Text(bytes.subarray(20, 27)),
-    otId: tid,
+    otId: tid, sid,
     level: bytes[84],
+    nature, natureName: NATURE_NAMES[nature], natureEffect: natureEffect(nature),
+    ability, abilitySlot,
+    exp, happiness,
     heldItem, heldItemName, shiny, gender,
     hp: u16le(bytes, 86),
     maxHp: u16le(bytes, 88),
     types, stats,
     dv: ivs,                       // 0-31 IVs (shown where gens 1/2 show DVs)
+    evs: evSpread,
     checksumValid,
     nicknamed: nickname.toUpperCase() !== name.toUpperCase(),
     tradeEvolves: false,

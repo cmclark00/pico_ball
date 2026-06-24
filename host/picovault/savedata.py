@@ -8,6 +8,7 @@ For each Pokémon we write:
   * partyNN_<name>.json  -- decoded summary
 and a combined party.json.
 """
+import datetime
 import json
 import os
 
@@ -147,6 +148,10 @@ def infer_gen(path):
 
 
 def _write_record(info, vault_dir, stem, gen=1):
+    # Stamp when this record was saved (local time), so the WebUI/`vault list`
+    # can show a capture date. On the standalone deck the device RTC could
+    # supply this instead; here it's the host clock at save time.
+    info.setdefault("captured", datetime.datetime.now().isoformat(timespec="seconds"))
     ext = _RECORD_EXT.get(gen, ".pk1")
     rec_path = os.path.join(vault_dir, stem + ext)
     with open(rec_path, "wb") as fh:

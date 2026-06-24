@@ -43,6 +43,7 @@ def _records(vault_dir):
             except (OSError, ValueError):
                 info = {}
         moves = [m for m in (info.get("moves") or []) if m]
+        captured = (info.get("captured") or "")[:10]   # date portion of the ISO stamp
         yield {
             "file": os.path.basename(path),
             "gen": gen,
@@ -51,6 +52,7 @@ def _records(vault_dir):
             "nickname": info.get("nickname") or "",
             "ot": info.get("ot_name") or "",
             "moves": len(moves),
+            "captured": captured,
             "size": os.path.getsize(path),
         }
 
@@ -59,7 +61,7 @@ def _print_table(rows):
     if not rows:
         print("Vault is empty. Capture something with `extract.py` first.")
         return
-    hdr = ("#", "Gen", "Species", "Lv", "Nickname", "OT", "Mv", "File")
+    hdr = ("#", "Gen", "Species", "Lv", "Nickname", "OT", "Mv", "Captured", "File")
     widths = [len(h) for h in hdr]
     table = []
     for i, r in enumerate(rows):
@@ -71,6 +73,7 @@ def _print_table(rows):
             r["nickname"][:10],
             r["ot"][:10],
             str(r["moves"]),
+            r["captured"] or "-",
             r["file"],
         )
         widths = [max(w, len(c)) for w, c in zip(widths, cells)]

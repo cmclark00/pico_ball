@@ -120,6 +120,7 @@
 
 <script src="pokedata.js"></script>
 <script src="pokedata_gen3.js"></script>
+<script src="pokedata_gen3_abilities.js"></script>
 <script src="decode.js"></script>
 <!-- Gen 3 path (WebUSB + multiboot). Attaches window.PicoGen3 for the app below. -->
 <script type="module" src="gen3.js"
@@ -155,9 +156,12 @@ function monSummary(mon) {
   return {
     species: mon.name, nickname: mon.nickname, level: mon.level,
     types: mon.types, hp: `${mon.hp}/${mon.maxHp}`, stats: mon.stats,
-    dvs: mon.dv, ot: mon.otName, otId: mon.otId, nicknamed: mon.nicknamed,
-    tradeEvolves: mon.tradeEvolves, heldItem: mon.heldItemName || null,
-    shiny: mon.shiny, gender: mon.gender,
+    dvs: mon.dv, evs: mon.evs || null, ot: mon.otName, otId: mon.otId, sid: mon.sid ?? null,
+    national: mon.national || null, nature: mon.natureName || null, ability: mon.ability || null,
+    exp: mon.exp ?? null, happiness: mon.happiness ?? null,
+    nicknamed: mon.nicknamed, tradeEvolves: mon.tradeEvolves,
+    heldItem: mon.heldItemName || null, shiny: mon.shiny, gender: mon.gender,
+    captured: mon.captured || null,
     mail: mon.mail || null, mailFrom: mon.mailFrom || null,
     moves: mon.moves.map(m => ({ name: m.name, pp: m.pp })),
     pk1_hex: Array.from(mon.raw).map(b => b.toString(16).padStart(2, "0")).join(""),
@@ -212,7 +216,7 @@ function card(mon, index) {
       <div>
         <div class="name">${mon.name}${genderMark}</div>
         <div class="nick">“${mon.nickname || mon.name}”</div>
-        <span class="badge">Lv ${mon.level}</span>
+        <span class="badge">Lv ${mon.level}</span>${mon.national ? ` <span class="badge">#${mon.national}</span>` : ""}
       </div>
     </div>
     <div class="chips">${typeChips}${flags}</div>
@@ -222,10 +226,15 @@ function card(mon, index) {
     <div class="dv">${mon.gen === 3
       ? `IVs — HP ${mon.dv.hp} · Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · SpA ${mon.dv.spa} · SpD ${mon.dv.spdef}`
       : `DVs — Atk ${mon.dv.atk} · Def ${mon.dv.def} · Spd ${mon.dv.spd} · Spc ${mon.dv.spc} · HP ${mon.dv.hp}`}</div>
+    ${mon.evs ? `<div class="dv">EVs — HP ${mon.evs.hp} · Atk ${mon.evs.atk} · Def ${mon.evs.def} · Spd ${mon.evs.spd} · SpA ${mon.evs.spa} · SpD ${mon.evs.spdef}</div>` : ""}
+    ${mon.natureName ? `<div class="meta">Nature: ${mon.natureName}${mon.natureEffect}</div>` : ""}
+    ${mon.ability ? `<div class="meta">Ability: ${mon.ability}</div>` : ""}
     <ul class="moves">${moves || "<li>No moves</li>"}</ul>
     ${mon.heldItemName ? `<div class="meta">Held: ${mon.heldItemName}</div>` : ""}
     ${mon.mail ? `<div class="meta">✉️ “${esc(mon.mail)}”${mon.mailFrom ? ` — ${esc(mon.mailFrom)}` : ""}</div>` : ""}
-    <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}</div>
+    ${mon.exp != null ? `<div class="meta">EXP ${mon.exp.toLocaleString()}${mon.happiness != null ? ` · Happiness ${mon.happiness}` : ""}</div>` : ""}
+    ${mon.captured ? `<div class="meta">Captured ${esc(mon.captured)}</div>` : ""}
+    <div class="meta">OT ${mon.otName || "?"} · ID ${mon.otId}${mon.sid != null ? ` / ${mon.sid}` : ""}</div>
     <div class="row">
       <button class="btn-sm dl-pk1">Download .pk${mon.gen}</button>
       ${index >= 0 ? `<button class="btn-sm inj-mon">Inject</button>
@@ -671,7 +680,10 @@ async function loadVaultFile(file) {
     if (!hex) return null;
     const bytes = hexToBytes(hex);
     const gen = genForLength(bytes.length);
-    return gen ? decodeMonRecord(bytes, gen) : null;
+    if (!gen) return null;
+    const mon = decodeMonRecord(bytes, gen);
+    if (mon && j.captured) mon.captured = j.captured;  // capture timestamp from host JSON
+    return mon;
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   const gen = genForLength(bytes.length);
