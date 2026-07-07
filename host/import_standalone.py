@@ -20,6 +20,7 @@ import argparse
 import os
 import sys
 import time
+from typing import Any, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
@@ -44,31 +45,41 @@ def _open_vault():
     import usb.core
     import usb.util
 
-    dev = usb.core.find(idVendor=PICO_VID)
-    if dev is None:
-        return None, None, None
-    if sys.platform != "win32":
-        try:
-            if dev.is_kernel_driver_active(0):
-                dev.detach_kernel_driver(0)
-        except Exception:  # noqa: BLE001
-            pass
-    try:  # macOS/libusb errors if a configuration is already active; only set if not
-        dev.get_active_configuration()
-    except usb.core.USBError:
-        dev.set_configuration()
-    itf = next(i for i in dev.get_active_configuration() if i.bInterfaceClass == 0xFF)
-    ep_out = usb.util.find_descriptor(
-        itf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
-        == usb.util.ENDPOINT_OUT)
-    ep_in = usb.util.find_descriptor(
-        itf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
-        == usb.util.ENDPOINT_IN)
-    try:  # 0x22 "connect" so the firmware mirrors its console output to us
-        dev.ctrl_transfer(0x21, 0x22, 0x0001, itf.bInterfaceNumber, None)
-    except Exception:  # noqa: BLE001
-        pass
-    return dev, ep_out, ep_in
+    devices = usb.core.find(find_all=True, idVendor=PICO_VID) or []
+    for dev_obj in devices:
+        dev = cast(Any, dev_obj)
+        try:  # macOS/libusb errors if a configuration is already active; only set if not
+            cfg = dev.get_active_configuration()
+        except usb.core.USBError:
+            try:
+                dev.set_configuration()
+                cfg = dev.get_active_configuration()
+            except usb.core.USBError:
+                continue
+
+        for itf in cfg:
+            if itf.bInterfaceClass != 0xFF:
+                continue
+            ep_out = usb.util.find_descriptor(
+                itf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
+                == usb.util.ENDPOINT_OUT)
+            ep_in = usb.util.find_descriptor(
+                itf, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress)
+                == usb.util.ENDPOINT_IN)
+            if ep_out is None or ep_in is None:
+                continue
+            if sys.platform != "win32":
+                try:
+                    if dev.is_kernel_driver_active(itf.bInterfaceNumber):
+                        dev.detach_kernel_driver(itf.bInterfaceNumber)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:  # 0x22 "connect" so the firmware mirrors its console output to us
+                dev.ctrl_transfer(0x21, 0x22, 0x0001, itf.bInterfaceNumber, None)
+            except Exception:  # noqa: BLE001
+                pass
+            return dev, ep_out, ep_in
+    return None, None, None
 
 
 def _read_dump():
@@ -78,6 +89,8 @@ def _read_dump():
     dev, ep_out, ep_in = _open_vault()
     if dev is None:
         return None
+    ep_out = cast(Any, ep_out)
+    ep_in = cast(Any, ep_in)
     try:
         try:
             ep_out.write(b"d")
@@ -153,8 +166,9 @@ def main():
             print("No dex entries returned. Has the board captured anything yet?")
             return 1
 
-        transfer = not args.no_gen3_transfer and pccs.available()
-        if not args.no_gen3_transfer and not pccs.available():
+        pccs_ok = pccs.available()
+        transfer = not args.no_gen3_transfer and pccs_ok
+        if not args.no_gen3_transfer and not pccs_ok:
             print("(Gen 3 transfer skipped: PCCS converter not built. "
                   "Run scripts/setup.sh to enable it.)")
 

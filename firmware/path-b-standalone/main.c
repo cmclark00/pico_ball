@@ -33,7 +33,7 @@
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
-static int inject_slot = 0; // which dex slot to inject (default: slot 0; USB 'i <n>' overrides, -1 = most recent)
+static int inject_slot = -1; // dex slot to inject: -1 = most recently captured (USB 'i <n>' overrides)
 static bool wipe_armed = false; // 'w' arms; '!' confirms (guards the flash erase)
 
 static void dump_all(void) {
@@ -363,7 +363,11 @@ static void handle_serial(void) {
     switch (ch) {
         case 'd': dump_all(); break;
         case 'c': printf("COUNT %d/%d\n", storage_count(), storage_capacity()); break;
-        case 'a': do_capture(); show_idle(); break;
+        case 'a':
+            if (current_gen == 3) do_capture_gen3();
+            else do_capture();
+            show_idle();
+            break;
         case 'i': {
             int n = read_uint();
             if (n >= 0) inject_slot = n;   // explicit index overrides auto
@@ -422,7 +426,7 @@ int main(void) {
 
     sleep_ms(300);
     printf("\npico_ball standalone vault. Stored %d/%d.\n"
-           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject slot 0 (USB 'i n' picks)\n"
+           "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject last capture (USB 'i n' picks)\n"
            "Gen 3: tap multiboots the GBA, then (on its trade screen) tap again to capture.\n"
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
            "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w!'=wipe\n"

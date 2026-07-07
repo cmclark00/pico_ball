@@ -11,6 +11,7 @@ cd "$ROOT"
 
 PYTHONPATH=host python3 - <<'PY'
 import sys, os, json, tempfile
+from types import SimpleNamespace
 sys.path.insert(0, "host")
 from picovault import engine, savedata
 
@@ -100,16 +101,28 @@ with engine.engine_cwd():
     t.sleep_timer = 0
     engine.prime_capture_session(t)
     t.other_pokemon = inj
+    t.own_pokemon = SimpleNamespace(pokemon=[mon, mon, mon])
     ok, idx = engine.local_inject_commit(t)
     assert ok and idx == 2, (ok, idx)
     assert link.sent.count(CTRL | (0x80 << 16) | 25) == 11, "offer sent 11x"
-    for a in accepts + succ:
-        assert link.sent.count(CTRL | a) == 11
+    payloads = [
+        (0xA2 << 16) | 25,
+        (0xB2 << 16) | 25,
+        (0x90 << 16) | 25,
+        (0x91 << 16) | (pid & 0xFFFF),
+        (0x92 << 16) | (pid >> 16),
+        (0x93 << 16) | 25,
+        (0x94 << 16) | (pid & 0xFFFF),
+        (0x95 << 16) | (pid >> 16),
+        (0x9C << 16),
+    ]
+    for a in payloads:
+        assert link.sent.count(CTRL | a) == 11, hex(a)
     print("  inject commit handshake (offer/2 accepts/7 successes)")
 
     link = ScriptedLink([(0x82 << 16) | 25, 0xA1 << 16] + [0x8F << 16]*10)
     t = engine.build_trader(link, verbose=False, sanity=True, gen=3)
-    t.sleep_timer = 0; engine.prime_capture_session(t); t.other_pokemon = inj
+    t.sleep_timer = 0; engine.prime_capture_session(t); t.other_pokemon = inj; t.own_pokemon = SimpleNamespace(pokemon=[mon, mon, mon])
     ok, idx = engine.local_inject_commit(t)
     assert not ok and idx == 2
     link = ScriptedLink([0x8F << 16] * 2)

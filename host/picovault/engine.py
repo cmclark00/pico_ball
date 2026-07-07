@@ -251,12 +251,6 @@ def _local_inject_commit_gen3(trader):
     device-facing sequence: values are 24-bit (command byte << 16 | payload),
     there are two accept rounds and seven success rounds, and every value we
     send is repeated option_confirmation_threshold+1 times.
-
-    NOTE: this still sends the accept/success words with empty low bits, which
-    Gen3-to-GenX rejects (it re-checks the low 16 bits against the trade's
-    species/PID and declines on a mismatch). The standalone firmware's
-    commit_inject (firmware/path-b-standalone/gen3_trade.c) carries the correct
-    payload — port that here if/when the PC-tethered Gen 3 inject is revived.
     """
     send = trader.send_data_multiple_times
 
@@ -265,6 +259,13 @@ def _local_inject_commit_gen3(trader):
     if trader.is_choice_stop(sent_mon):
         return False, None
     given_up_index = trader.convert_choice(sent_mon)
+
+    our_mon = trader.other_pokemon.pokemon[0]
+    our_species = our_mon.get_species()
+    our_pid = our_mon.pid
+    recv_mon = trader.own_pokemon.pokemon[given_up_index]
+    recv_species = recv_mon.get_species()
+    recv_pid = recv_mon.pid
 
     # 2. Offer our mon: party slot 0 (the species rides in the low bits).
     # After the starting sequence, other_pokemon is the party WE sent in, so
@@ -277,14 +278,29 @@ def _local_inject_commit_gen3(trader):
         if trader.is_choice_decline(accepted, i):
             trader.end_trade()
             return False, given_up_index
-        send(trader.swap_trade_raw_data_pure, trader.accept_trade[i] << 16)
+
+        # Gen3-to-GenX validates the low 16 bits of each accept word against
+        # the species we are offering. Sending only (accept << 16) causes the
+        # GBA side to decline on the final accept round.
+        send(trader.swap_trade_raw_data_pure,
+             (trader.accept_trade[i] << 16) | our_species)
 
     # 4. Seven success rounds commit the swap.
+    success_payload = [
+        our_species,
+        our_pid & 0xFFFF,
+        (our_pid >> 16) & 0xFFFF,
+        recv_species,
+        recv_pid & 0xFFFF,
+        (recv_pid >> 16) & 0xFFFF,
+        0,
+    ]
     failed = False
     for i in range(7):
         success_result = trader.wait_for_success(0, i)
         failed = failed or trader.has_failed(success_result)
-        send(trader.swap_trade_raw_data_pure, trader.success_trade[i] << 16)
+        send(trader.swap_trade_raw_data_pure,
+             (trader.success_trade[i] << 16) | success_payload[i])
 
     trader.exit_or_new = True
     trader.reset_trade()
