@@ -106,7 +106,7 @@ converter (PCCS), so pulling captures off the board auto-writes a Gen 3 box `.pk
 for each Gen 1/2 mon:
 
 ```bash
-python host/import_standalone.py    # vault/dex/*.pk1 + vault/dex/gen3/*.pk3
+./pb import                         # vault/dex/*.pk1 + vault/dex/gen3/*.pk3
 ```
 
 The `.pk3` files are 80-byte box records — drag them straight into **PKHeX** (or a
@@ -123,7 +123,7 @@ With the standalone (Path B) firmware flashed, you don't need to copy anything t
 disk to look at your captures:
 
 ```bash
-cd webui && python3 -m http.server 8000     # then open http://localhost:8000 in Chrome/Edge
+./pb webui                # serves webui/ — open http://localhost:8000 in Chrome/Edge
 ```
 
 Click **Connect device**, pick **"pico_ball vault"** from the WebUSB chooser, and

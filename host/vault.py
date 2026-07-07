@@ -2,9 +2,10 @@
 """
 vault.py -- show everything captured in the vault, decoded.
 
-Reads the records in vault/ (.pk1/.pk2/.pk3) and their sibling .json summaries
-(written by extract.py / inject.py) and prints a single table, grouped by
-generation. No device needed.
+Reads the records in vault/ and its subfolders (.pk1/.pk2/.pk3 — including
+dex/ from import_standalone.py and dex/gen3/ PCCS conversions) plus their
+sibling .json summaries (written by extract.py / inject.py) and prints a
+single table, grouped by generation. No device needed.
 
 Usage:
     python host/vault.py                 # list vault/
@@ -27,10 +28,11 @@ _RECORD_GLOBS = ("*.pk1", "*.pk2", "*.pk3")
 
 
 def _records(vault_dir):
-    """Yield dicts describing each record file, decoded from its sibling JSON
-    where available."""
+    """Yield dicts describing each record file (vault_dir and subfolders like
+    dex/), decoded from its sibling JSON where available."""
     paths = sorted(
-        {p for g in _RECORD_GLOBS for p in glob.glob(os.path.join(vault_dir, g))}
+        {p for g in _RECORD_GLOBS
+         for p in glob.glob(os.path.join(vault_dir, "**", g), recursive=True)}
     )
     for path in paths:
         gen = savedata.infer_gen(path)
@@ -45,7 +47,7 @@ def _records(vault_dir):
         moves = [m for m in (info.get("moves") or []) if m]
         captured = (info.get("captured") or "")[:10]   # date portion of the ISO stamp
         yield {
-            "file": os.path.basename(path),
+            "file": os.path.relpath(path, vault_dir),
             "gen": gen,
             "species": info.get("species_name") or "?",
             "level": info.get("level"),

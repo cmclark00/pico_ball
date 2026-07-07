@@ -156,13 +156,13 @@ Next:
        sudo udevadm control --reload-rules && sudo udevadm trigger
      (re-plug the board afterward)
 
-  3. Activate the venv and run a self-test (no Game Boy needed):
+  3. Run a self-test (no Game Boy needed) — the ./pb launcher uses the venv
+     automatically, nothing to activate:
 
-       source host/.venv/bin/activate
-       python host/extract.py --selftest
+       ./pb extract --selftest
 
   4. Connect the board to the GBA, boot Pokémon Blue, go to the Cable Club
      Trade Center, then:
 
-       python host/extract.py
+       ./pb extract
 EOF

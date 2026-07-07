@@ -63,7 +63,8 @@ def _pick_record(path_arg, vault_dir, gen):
         pats = ("*.pk2", "*.pk1")    # .pk1 = legacy Gen 2 (or a Gen 1 mon for the Time Capsule)
     else:
         pats = ("*.pk1",)
-    recs = sorted({p for pat in pats for p in glob.glob(os.path.join(vault_dir, pat))})
+    recs = sorted({p for pat in pats
+                   for p in glob.glob(os.path.join(vault_dir, "**", pat), recursive=True)})
 
     def _eligible(p):
         g = savedata.infer_gen(p)
@@ -71,6 +72,13 @@ def _pick_record(path_arg, vault_dir, gen):
             return g in (1, None)
         if gen == 2:
             return g in (1, 2, None)  # allow a Gen 1 mon (Time Capsule)
+        # Gen 3: dex/gen3/ PCCS conversions are 80-byte *box* records (for
+        # PKHeX); the trade FSM needs the >=100-byte party struct.
+        try:
+            if os.path.getsize(p) < 100:
+                return False
+        except OSError:
+            return False
         return g in (3, None)
     recs = [p for p in recs if _eligible(p)]
 
@@ -80,7 +88,7 @@ def _pick_record(path_arg, vault_dir, gen):
         )
     print("Vaulted Pokémon:")
     for i, p in enumerate(recs):
-        print(f"  [{i}] {_record_label(p)}")
+        print(f"  [{i}] {_record_label(p)}  ({os.path.relpath(p, vault_dir)})")
     sel = input("Inject which number? ").strip()
     if not sel.isdigit() or int(sel) >= len(recs):
         raise RuntimeError("Invalid selection.")
