@@ -41,6 +41,7 @@ class UsbLink:
         self.ep_in = None
         self.ep_out = None
         self.reattach = False
+        self.reattach_interface = None
 
     # -- lifecycle ---------------------------------------------------------
     def open(self):
@@ -55,13 +56,14 @@ class UsbLink:
                 "Check `lsusb` for cafe:4011."
             )
 
-        # On Linux, detach any kernel driver bound to the interface.
+        # On Linux, detach any kernel driver bound to the vendor data interface.
         if sys.platform != "win32":
             try:
-                if dev.is_kernel_driver_active(0):
+                if dev.is_kernel_driver_active(VENDOR_INTERFACE):
                     self.reattach = True
-                    dev.detach_kernel_driver(0)
-            except (NotImplementedError, Exception):  # noqa: BLE001
+                    self.reattach_interface = VENDOR_INTERFACE
+                    dev.detach_kernel_driver(VENDOR_INTERFACE)
+            except Exception:  # noqa: BLE001
                 pass
 
         dev.reset()
@@ -93,10 +95,12 @@ class UsbLink:
             try:
                 self._util.dispose_resources(self.dev)
                 if sys.platform != "win32" and self.reattach:
-                    self.dev.attach_kernel_driver(0)
+                    self.dev.attach_kernel_driver(self.reattach_interface)
             except Exception:  # noqa: BLE001
                 pass
             self.dev = None
+            self.reattach = False
+            self.reattach_interface = None
 
     def __enter__(self):
         return self.open()

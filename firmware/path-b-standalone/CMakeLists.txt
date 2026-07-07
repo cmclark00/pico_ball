@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.13)
 include(pico_sdk_import.cmake)
 project(pico_ball_vault C CXX ASM)
 pico_sdk_init()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_executable(pico_ball_vault)
 
@@ -44,3 +45,13 @@ target_link_libraries(pico_ball_vault PRIVATE
 pico_enable_stdio_uart(pico_ball_vault 0)
 
 pico_add_extra_outputs(pico_ball_vault)
+
+# The top 128 KiB of RP2040 flash is used as the on-device Pokémon vault
+# (storage.c: VAULT_OFFSET). Fail the build if the firmware image grows into
+# that reserved region.
+add_custom_command(TARGET pico_ball_vault POST_BUILD
+        COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:pico_ball_vault>
+                ${CMAKE_CURRENT_BINARY_DIR}/pico_ball_vault.sizecheck.bin
+        COMMAND ${Python3_EXECUTABLE} -c
+                "import os,sys; p='${CMAKE_CURRENT_BINARY_DIR}/pico_ball_vault.sizecheck.bin'; n=os.path.getsize(p); limit=2*1024*1024-128*1024; print(f'Firmware image: {n} bytes (vault starts at {limit})'); sys.exit(0 if n <= limit else 'firmware image overlaps reserved vault flash')"
+        VERBATIM)

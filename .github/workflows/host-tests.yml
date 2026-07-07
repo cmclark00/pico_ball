@@ -1,0 +1,45 @@
+name: Host tests
+
+# Runs the self-contained host/webui test suite (trade engine round-trips,
+# .sav builders, PCCS Gen 1/2 -> Gen 3 conversion). tools/test_webui.sh is
+# excluded: it validates against personal vault captures that aren't committed.
+on:
+  push:
+    paths:
+      - "host/**"
+      - "tools/**"
+      - "webui/**"
+      - "scripts/setup.sh"
+      - ".github/workflows/host-tests.yml"
+  pull_request:
+    paths:
+      - "host/**"
+      - "tools/**"
+      - "webui/**"
+      - "scripts/setup.sh"
+      - ".github/workflows/host-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Clones the pinned trade engine, fetches the Gen 3 artifacts, and builds
+      # the PCCS converter (devkitPro is absent, so the PTGB step self-skips).
+      - name: Setup (engine + Gen 3 artifacts + PCCS)
+        run: ./scripts/setup.sh
+
+      - name: Gen 1 .sav export (incl. full party of 6)
+        run: bash tools/test_sav_gen1.sh
+
+      - name: Gen 2 .sav export (Python vs JS byte-identical)
+        run: bash tools/test_sav_gen2.sh
+
+      - name: Gen 3 engine round-trip + inject handshake
+        run: bash tools/test_gen3.sh
+
+      - name: PCCS Gen 1/2 -> Gen 3 conversion
+        run: python3 tools/test_pccs.py

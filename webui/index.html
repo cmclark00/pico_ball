@@ -28,6 +28,11 @@
   }
   button:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--shadow); }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  select {
+    font: inherit; font-weight: 600; cursor: pointer; color: var(--ink-dark);
+    background: var(--panel2); border: 2px solid var(--accent);
+    border-radius: 8px; padding: 8px 12px; box-shadow: 0 3px 0 var(--shadow);
+  }
   #status { margin-left: auto; font-size: 13px; color: var(--accent); }
   #unsupported { display:none; background:#5a1a1a; color:#fdd; padding:12px 24px; }
   main { padding: 24px; }
@@ -152,7 +157,12 @@ function downloadPkx(mon) {
            new Blob([mon.raw], { type: "application/octet-stream" }));
 }
 
+function hexBytes(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
 function monSummary(mon) {
+  const rawFull = mon.rawFull || mon.raw;
   return {
     species: mon.name, nickname: mon.nickname, level: mon.level,
     types: mon.types, hp: `${mon.hp}/${mon.maxHp}`, stats: mon.stats,
@@ -164,7 +174,9 @@ function monSummary(mon) {
     captured: mon.captured || null,
     mail: mon.mail || null, mailFrom: mon.mailFrom || null,
     moves: mon.moves.map(m => ({ name: m.name, pp: m.pp })),
-    pk1_hex: Array.from(mon.raw).map(b => b.toString(16).padStart(2, "0")).join(""),
+    raw_record_hex: hexBytes(rawFull),
+    raw_pk1_hex: hexBytes(mon.raw),  // legacy host JSON key; for Gen 3 this is the 100-byte .pk3
+    pk1_hex: hexBytes(mon.raw),      // legacy WebUI export key
   };
 }
 
@@ -178,6 +190,10 @@ function downloadDexJson(mons, gen) {
 // Gen 2 uses the Crystal layout (see buildSavFromMons); both gens open in PKHeX.
 function downloadSav(mons, gen) {
   const party = mons.slice(0, 6);
+  if (gen === 2 && party.some(m => m.mail)) {
+    alert("Gen 2 .sav export with Mail is not supported yet. Download .pk2/JSON instead to preserve the mail payload.");
+    return;
+  }
   const sav = buildSavFromMons(party, gen);
   if (!sav) { alert("Could not build a .sav for this generation."); return; }
   const ext = gen === 2 ? "crystal.sav" : "sav";
@@ -460,7 +476,7 @@ async function withBusy(label, fn) {
   busy = true; setControls(true); setStatus(label);
   try { await fn(); }
   catch (e) { setStatus("Error: " + e.message); }
-  finally { busy = false; setControls(true); }
+  finally { busy = false; setControls(connected()); }
 }
 
 // Send 'd', collect the dex (one MON line per stored Pokémon), render.
@@ -674,16 +690,20 @@ function genForLength(n) {
 }
 
 async function loadVaultFile(file) {
-  if (file.name.endsWith(".json")) {
+  if (file.name.toLowerCase().endsWith(".json")) {
     const j = JSON.parse(await file.text());
-    const hex = j.raw_record_hex || j.raw_pk1_hex;
-    if (!hex) return null;
-    const bytes = hexToBytes(hex);
-    const gen = genForLength(bytes.length);
-    if (!gen) return null;
-    const mon = decodeMonRecord(bytes, gen);
-    if (mon && j.captured) mon.captured = j.captured;  // capture timestamp from host JSON
-    return mon;
+    const decodeJsonRecord = (rec) => {
+      const hex = rec.raw_record_hex || rec.raw_pk1_hex || rec.pk1_hex;
+      if (!hex) return null;
+      const bytes = hexToBytes(hex);
+      const gen = genForLength(bytes.length);
+      if (!gen) return null;
+      const mon = decodeMonRecord(bytes, gen);
+      if (mon && rec.captured) mon.captured = rec.captured;  // capture timestamp from host JSON
+      return mon;
+    };
+    if (Array.isArray(j.pokemon)) return j.pokemon.map(decodeJsonRecord).filter(Boolean);
+    return decodeJsonRecord(j);
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   const gen = genForLength(bytes.length);
@@ -697,7 +717,8 @@ async function showVaultFiles(files) {
   for (const f of files) {
     try {
       const mon = await loadVaultFile(f);
-      if (mon) { grid.appendChild(card(mon, -1)); n++; }
+      const mons = Array.isArray(mon) ? mon : (mon ? [mon] : []);
+      if (mons.length) { for (const m of mons) grid.appendChild(card(m, -1)); n += mons.length; }
       else console.warn("Unrecognized record:", f.name);
     } catch (e) { console.warn("Failed to decode", f.name, e); }
   }

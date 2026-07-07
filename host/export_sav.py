@@ -160,8 +160,15 @@ def party_from_pk1s(trader, files):
         raise RuntimeError(f"need 1-6 Pokémon, got {len(mons)}")
     party.pokemon = mons
     party.party_info.total = len(mons)
+    for i in range(len(party.party_info.actual_mons)):
+        party.party_info.actual_mons[i] = 0
     for i, m in enumerate(mons):
         party.party_info.actual_mons[i] = m.get_species()
+    # Terminate the species list. actual_mons only holds the 6 species slots;
+    # for a full party the terminator lives one byte past it and is already
+    # 0xFF in the base.bin section create_trading_data starts from.
+    if len(mons) < len(party.party_info.actual_mons):
+        party.party_info.actual_mons[len(mons)] = 0xFF
     return party
 
 
@@ -184,8 +191,13 @@ def main():
         vault = os.path.join(REPO_ROOT, "vault")
         pats = ("party0*.pk2", "party0*.pk1") if args.gen == 2 else ("party0*.pk1",)
         files = sorted({p for pat in pats for p in glob.glob(os.path.join(vault, pat))})
+        # Auto-discovery should not silently build a save from the wrong
+        # generation. Keep legacy Gen 2 records that were saved as .pk1 (their
+        # length infers as Gen 2), but skip real Gen 1 captures when --gen 2.
+        files = [f for f in files if savedata.infer_gen(f) in (args.gen, None)]
     if not files:
-        print("No record files. Run extract.py first, or pass files.", file=sys.stderr)
+        print(f"No Gen {args.gen} record files. Run extract.py --gen {args.gen} first, "
+              "or pass files explicitly.", file=sys.stderr)
         return 2
 
     # Warn (don't block) if a file's apparent gen doesn't match --gen: a .sav is

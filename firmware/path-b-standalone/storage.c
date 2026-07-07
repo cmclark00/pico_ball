@@ -138,6 +138,7 @@ uint16_t storage_read_slot(int index, int *gen, int *species, uint8_t *out, uint
             if (gen) *gen = p[2];
             if (species) *species = (int)p[3] | ((int)p[4] << 8);
             uint16_t len = p[5];
+            if (len > MAX_PAYLOAD) return 0;
             if (len > out_cap) len = out_cap;
             memcpy(out, p + HDR_LEN, len);
             return len;
