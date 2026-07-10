@@ -5,10 +5,12 @@ on:
   push:
     paths:
       - "firmware/path-b-standalone/**"
+      - "firmware/gen4-gts/**"
       - ".github/workflows/firmware.yml"
   pull_request:
     paths:
       - "firmware/path-b-standalone/**"
+      - "firmware/gen4-gts/**"
   workflow_dispatch:
 
 jobs:
@@ -64,4 +66,53 @@ jobs:
         with:
           name: pico_ball_vault-uf2
           path: firmware/path-b-standalone/build/pico_ball_vault.uf2
+          if-no-files-found: error
+
+  # Gen 4 GTS server (Route B) — Pico 2 W (RP2350 + CYW43439), needs WiFi.
+  build-gts:
+    runs-on: ubuntu-latest
+    env:
+      PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+      PICO_SDK_REF: "2.2.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Arm GNU toolchain
+        uses: carlosperate/arm-none-eabi-gcc-action@v1
+        with:
+          release: "13.2.Rel1"
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake build-essential pkg-config libusb-1.0-0-dev
+
+      - name: Checkout Pico SDK
+        uses: actions/checkout@v4
+        with:
+          repository: raspberrypi/pico-sdk
+          ref: ${{ env.PICO_SDK_REF }}
+          path: pico-sdk
+          submodules: false
+
+      - name: Init submodules (TinyUSB + lwIP + cyw43-driver)
+        run: git -C pico-sdk submodule update --init --depth 1
+             lib/tinyusb lib/lwip lib/cyw43-driver
+
+      - name: Configure & build
+        run: |
+          cmake -S firmware/gen4-gts -B firmware/gen4-gts/build \
+                -DCMAKE_BUILD_TYPE=Release
+          cmake --build firmware/gen4-gts/build -j "$(nproc)"
+
+      - name: Show artifact info
+        run: ls -la firmware/gen4-gts/build/pico_ball_gts.uf2
+
+      - name: Upload UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: pico_ball_gts-uf2
+          path: firmware/gen4-gts/build/pico_ball_gts.uf2
           if-no-files-found: error
