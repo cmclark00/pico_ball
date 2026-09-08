@@ -35,3 +35,8 @@ hardware/kicad/drc.rpt
 hardware/kicad/*.kicad_prl
 hardware/kicad/logs/
 hardware/kicad/.history/
+
+# Editor scratch files
+.*.kate-swp
+*.swp
+*~
