@@ -8,6 +8,7 @@
 // operations (multiboot, trades) don't stall USB.
 #include "tusb.h"
 #include "usb_descriptors.h"
+#include "display_console.h"
 #include "pico/stdlib.h"
 #include "pico/stdio/driver.h"
 #include "pico/mutex.h"
@@ -84,6 +85,9 @@ static void write_cdc(const char *buf, int len) {
 #endif
 
 static void vault_out_chars(const char *buf, int length) {
+    // UART first: an abandoned WebUSB client can fill its endpoint and time out,
+    // but must never delay or suppress the standalone touchscreen UI.
+    display_console_write(buf, (size_t)length);
     if (!mutex_try_enter_block_until(&usb_mutex, make_timeout_time_ms(100))) return;
 #if CFG_TUD_CDC
     if (cdc_ready()) write_cdc(buf, length);

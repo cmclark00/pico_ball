@@ -131,11 +131,21 @@ the page reads the stored records over **WebUSB** and decodes the Pokémon **in 
 browser** — sprite, level, HP, moves, OT. Works on desktop and Android Chrome. See
 [webui/README.md](webui/README.md).
 
+## Optional 3.2-inch touch front panel
+
+The Hosyond `E32R32P` ESP32-32E display (ST7789P3 + XPT2046) can act as a
+standalone front panel. It lists the Pico's vault over a three-wire UART link and
+lets you tap a Gen 3 Pokémon, multiboot the GBA trade program, and inject that
+exact vault slot without a PC. See
+[firmware/display-esp32/README.md](firmware/display-esp32/README.md) for the exact
+board identity, wiring, builds, flashing, and first-hardware acceptance test.
+
 ## Repository layout
 
 ```
 docs/                      Plan, research, protocol, hardware + flashing guide
 firmware/                  Which firmware to flash (Path A) + Path B design
+  display-esp32/           Hosyond E32R32P touchscreen vault picker
 host/                      Path A: the PC-side extractor (Python)
   picovault/               Our code: local no-server connection, save logic
   extract.py               Main entrypoint: copy party -> vault -> cancel

@@ -20,6 +20,7 @@ target_sources(pico_ball_vault PRIVATE
         gen_profile.c
         storage.c
         ui.c
+        display_console.c # optional Hosyond E32R32P UI over UART1 (GPIO4/5)
         pio_spi.c
         gen3_multiboot.c
         gen3_trade.c
@@ -34,6 +35,7 @@ target_link_libraries(pico_ball_vault PRIVATE
         hardware_pio
         hardware_flash
         hardware_sync
+        hardware_uart
         tinyusb_device     # our own TinyUSB descriptors (CDC + vendor) — no stdio_usb
         tinyusb_board
         pico_unique_id

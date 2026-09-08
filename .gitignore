@@ -36,3 +36,8 @@ hardware/kicad/*.kicad_prl
 hardware/kicad/logs/
 hardware/kicad/.history/
 hardware/kicad/gerbers/
+
+# Editor scratch files
+.*.kate-swp
+*.swp
+*~

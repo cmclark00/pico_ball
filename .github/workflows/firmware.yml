@@ -5,10 +5,19 @@ on:
   push:
     paths:
       - "firmware/path-b-standalone/**"
+      - "firmware/display-esp32/**"
+      - "tools/gen_display_species.py"
+      - "tools/gen_display_sprites.py"
+      - "webui/pokedata*.js"
       - ".github/workflows/firmware.yml"
   pull_request:
     paths:
       - "firmware/path-b-standalone/**"
+      - "firmware/display-esp32/**"
+      - "tools/gen_display_species.py"
+      - "tools/gen_display_sprites.py"
+      - "webui/pokedata*.js"
+      - ".github/workflows/firmware.yml"
   workflow_dispatch:
 
 jobs:
@@ -64,4 +73,41 @@ jobs:
         with:
           name: pico_ball_vault-uf2
           path: firmware/path-b-standalone/build/pico_ball_vault.uf2
+          if-no-files-found: error
+
+  build-touch-display:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test UART protocol parser
+        run: |
+          python3 tools/gen_display_species.py
+          git diff --exit-code -- firmware/display-esp32/src/species_names.h
+          g++ -std=c++17 -Wall -Wextra -Werror \
+              -Ifirmware/display-esp32/src \
+              firmware/display-esp32/src/protocol.cpp \
+              firmware/display-esp32/src/decoder.cpp \
+              firmware/display-esp32/test/test_protocol.cpp \
+              -o /tmp/display-protocol-test
+          /tmp/display-protocol-test
+          g++ -std=c++17 -O0 -Wall -Wextra -Werror \
+              -Ifirmware/display-esp32/src \
+              firmware/display-esp32/src/sprite_data.cpp \
+              firmware/display-esp32/test/test_sprites.cpp \
+              -o /tmp/display-sprite-test
+          /tmp/display-sprite-test
+
+      - name: Install PlatformIO
+        run: pipx install platformio==6.1.19
+
+      - name: Build Hosyond E32R32P firmware
+        run: platformio run -d firmware/display-esp32
+
+      - name: Upload ESP32 binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: pico_ball-hosyond-e32r32p-bin
+          path: firmware/display-esp32/.pio/build/hosyond-e32r32p/firmware.bin
           if-no-files-found: error

@@ -175,6 +175,12 @@ device at a time, so close the WebUI tab before running `import_standalone.py`
 `vault/dex/` (same format as Path A — so you can also use `inject.py` from a PC).
 The WebUI reads the same dump and shows the dex.
 
+The same console is mirrored at 115200 baud on **UART1** for the optional
+[Hosyond E32R32P touch front panel](../display-esp32/README.md): Pico GPIO4 is TX
+and GPIO5 is RX. Those pins do not overlap the Game Boy link (GPIO0–2) or the
+on-board RGB LED (GPIO16). The display uses the existing commands, so USB and
+WebUI behavior is unchanged.
+
 > The USB stack is a custom TinyUSB build (`usb_console.c`, `usb_descriptors.c`,
 > `tusb_config.h`) instead of the SDK's `stdio_usb`, because that one is CDC-only.
 > `printf`/`getchar` are routed over the vendor bulk endpoints by a custom

@@ -28,6 +28,7 @@
 #include "gen3_multiboot.h"
 #include "gen3_trade.h"
 #include "usb_console.h"
+#include "display_console.h"
 #include "pico/bootrom.h"
 
 static uint8_t record[GB_CAPTURE_MAX];
@@ -421,6 +422,7 @@ static void handle_serial(void) {
 
 int main(void) {
     usb_console_init();  // composite CDC + WebUSB-vendor console (mobile-capable)
+    display_console_init(); // optional touch display: same console on UART1 GPIO4/5
     gb_link_init();
     ui_init();
 
