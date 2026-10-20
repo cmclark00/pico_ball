@@ -93,7 +93,7 @@
 <header>
   <h1>pico_ball <small>Pokémon Vault — read directly from the device</small></h1>
   <button id="connect">Connect device</button>
-  <select id="gen" title="Generation for capture">
+  <select id="gen" title="Generation for capture and Gen 1/2 injection destination">
     <option value="1">Gen 1 (R/B/Y)</option>
     <option value="2">Gen 2 (G/S/C)</option>
     <option value="3">Gen 3 (R/S/E/FR/LG)</option>
@@ -591,12 +591,23 @@ function showCapturedGen3(records) {
 
 function injectRecord(i, gen) {
   if (gen === 3) return injectRecordGen3(i);
-  return withBusy("Injecting… Cable Club → Trade Center → sit at table", async () => {
+  const targetGen = document.getElementById("gen").value;
+  if (targetGen !== "1" && targetGen !== "2") {
+    setStatus("For Gen 1/2 injection, select the destination cartridge’s generation first.");
+    return;
+  }
+  return withBusy(`Injecting into Gen ${targetGen}… Cable Club → Trade Center → sit at table`, async () => {
+    // The board starts in Gen 1; changing the dropdown alone does not change it.
+    // Select the destination protocol even when the stored mon is another gen.
+    await sendCommand(targetGen, l => l === "GEN " + targetGen, 3000, l => {
+      if (l.startsWith("GEN") && l !== "GEN " + targetGen)
+        throw new Error("Board did not confirm the destination generation; reconnect and retry.");
+    });
     let result = "";
     await sendCommand("i" + i + "\n", l => l.startsWith("INJECT_RESULT"), 120000,
                       l => { if (l.startsWith("INJECT_RESULT")) result = l; });
-    setStatus(result.includes(" ok") ? "Injected!" : "Inject: " + result);
     await dump();
+    setStatus(result === "INJECT_RESULT ok" ? "Injected!" : "Inject: " + result);
   });
 }
 

@@ -63,6 +63,12 @@ With the latest firmware flashed, the header/​capture controls drive the devic
 - **Delete** (per capture) — erases that record's flash slot.
 - **Wipe all** — erases the whole vault (with a confirm).
 
+For **Inject** on a Gen 1/2 card, select the **destination cartridge's generation**
+in the dropdown first: **Gen 2 (G/S/C)** for Crystal's regular Trade Center.
+The page confirms that mode with the board before starting injection. Click
+Inject before proceeding through the Cable Club save/link handshake. Afterward,
+the status retains the injection result even when the vault refreshes.
+
 ### Gen 3 (R/S/E/FR/LG)
 Gen 3 needs 4-byte SIO32 transfers and the GBA running the **Gen3-to-GenX**
 homebrew (multibooted into RAM). There are two ways to do it, and the page picks
