@@ -5,6 +5,11 @@ name: Build firmware
 # ready-to-flash build always matches a known revision.
 on:
   push:
+    # Listing tags alone would stop branch pushes from triggering at all, so the
+    # branch filter is spelled out. The paths filter applies to branch pushes
+    # only; GitHub does not evaluate it for tag pushes.
+    branches:
+      - "**"
     tags:
       - "v*"
     paths:
