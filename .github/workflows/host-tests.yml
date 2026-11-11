@@ -1,7 +1,8 @@
 name: Host tests
 
 # Runs the self-contained host/webui test suite (trade engine round-trips,
-# .sav builders, PCCS Gen 1/2 -> Gen 3 conversion). tools/test_webui.sh is
+# .sav builders, PCCS Gen 1/2 -> Gen 3 conversion, and the standalone firmware's
+# Gen 1/2 logic compiled for the host). tools/test_webui.sh is
 # excluded: it validates against personal vault captures that aren't committed.
 on:
   push:
@@ -9,6 +10,7 @@ on:
       - "host/**"
       - "tools/**"
       - "webui/**"
+      - "firmware/path-b-standalone/**"
       - "scripts/setup.sh"
       - ".github/workflows/host-tests.yml"
   pull_request:
@@ -16,6 +18,7 @@ on:
       - "host/**"
       - "tools/**"
       - "webui/**"
+      - "firmware/path-b-standalone/**"
       - "scripts/setup.sh"
       - ".github/workflows/host-tests.yml"
   workflow_dispatch:
@@ -43,3 +46,9 @@ jobs:
 
       - name: PCCS Gen 1/2 -> Gen 3 conversion
         run: python3 tools/test_pccs.py
+
+      # Compiles the standalone firmware's Gen 1/2 trade FSM and Gen 1 <-> Gen 2
+      # conversion for the host and runs them against a simulated cartridge and
+      # the engine's data (also fails if cross_gen_tables.h is stale).
+      - name: Standalone firmware logic (trade FSM + cross-gen conversion)
+        run: python3 tools/test_firmware_host.py

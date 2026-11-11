@@ -99,7 +99,10 @@ cartridge's save. You only need the board, a GBA, a Gen 3 cart, and the cable �
 hand someone a flashed board and they're set. See
 [firmware/path-b-standalone/README.md](firmware/path-b-standalone/README.md)
 ("Transfer Gen 1/2 → Gen 3"). From the cartridge, the mon rides the official Pal
-Park → … → HOME chain on real hardware.
+Park → … → HOME chain on real hardware. **This path is not working yet:** the
+board can multiboot PTGB, but PTGB expects to talk to a real Game Boy game (it
+clocks the link itself and reads the game's PC boxes through its own protocol),
+not to a trade partner — see the status note in that README. Use option B today.
 
 **B. As a file, for PKHeX/emulators.** `scripts/setup.sh` also builds a host
 converter (PCCS), so pulling captures off the board auto-writes a Gen 3 box `.pk3`

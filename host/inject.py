@@ -169,7 +169,8 @@ def inject(record_path, vault_dir, verbose, sanity, gen):
                 data, _ = trader.trade_starting_sequence(True, send_data=send_data)
                 cart_party = trader.party_reader(data[1], data_mail=data[2])
 
-            committed, given_idx = engine.local_inject_commit(trader)
+            committed, given_idx = engine.local_inject_commit(
+                trader, our_party=party, cart_party=cart_party)
 
         if not committed:
             print("Trade was cancelled/declined in-game. Nothing changed.")

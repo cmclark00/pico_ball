@@ -3,19 +3,24 @@
 // No PC needed: press the button, sit at the Cable Club Trade Center table, and
 // the board copies your party into its own flash. The LED reports state.
 //
-// USB serial (CDC) is available for debug, retrieval, and control:
+// A text console (WebUSB vendor interface, mirrored on UART1 for the optional
+// touch display) is available for debug, retrieval, and control:
 //   'c'      -> print stored count
 //   'd'      -> dump all stored records as hex (import_standalone.py / WebUI read)
 //   'a'      -> arm/run a capture now (same as pressing the button)
-//   'i' <n>  -> inject slot n (omit n to inject most recently captured) back into a cartridge
-//   '1'/'2'  -> select generation (1 = R/B/Y, 2 = G/S/C) for the next operation
+//   'i' <n>  -> inject slot n (omit n to reuse the last slot / most recent capture)
+//   '1'/'2'/'3' -> select generation (1 = R/B/Y, 2 = G/S/C, 3 = R/S/E/FR/LG)
+//   'm' / 't'   -> Gen 3: multiboot Gen3-to-GenX / trade-capture the party
+//   'P' / 'o' <n> -> multiboot Poke Transporter GB / offer slot n to it
 //   'r' <n>  -> delete record n (digits terminated by newline)
 //   'w!'     -> wipe the whole vault ('w' arms, '!' confirms)
+//   'B'      -> reboot into BOOTSEL
 //
 // Button gestures:
-//   Tap        -> capture (current gen)
-//   Hold ~0.7s -> switch gen (Gen 1 <-> Gen 2)
-//   Hold ~2s   -> inject most recently captured mon (cross-gen auto-converted if needed)
+//   Tap        -> capture (current gen; Gen 3 = multiboot, then tap again to capture)
+//   Hold ~0.7s -> switch gen (Gen 1 -> Gen 2 -> Gen 3 -> Gen 1)
+//   Hold ~2s   -> inject the selected slot (default: most recently stored mon;
+//                 Gen 1 <-> Gen 2 is auto-converted if needed)
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "gb_link.h"
@@ -137,7 +142,9 @@ static void do_capture(void) {
     if (n > 0) {
         printf("CAPTURE_RESULT ok stored %d dex %d/%d\n",
                stored, storage_count(), storage_capacity());
-        ui_ok();
+        // Amber when some of the party didn't fit (vault full) or couldn't be
+        // stored, so a partial capture isn't mistaken for a complete one.
+        if (stored < n) ui_full(); else ui_ok();
     } else {
         printf("CAPTURE_RESULT badparse\n");
         ui_error();
@@ -195,7 +202,7 @@ static void run_gen3_trade(uint32_t pace) {
     }
     printf("G3T_RESULT ok %d stored %d dex %d/%d\n",
            n, stored, storage_count(), storage_capacity());
-    ui_ok();
+    if (stored < n) ui_full(); else ui_ok();
     sleep_ms(2500);
 }
 
@@ -231,7 +238,7 @@ static void run_gen3_inject(int slot, uint32_t pace) {
         bool stored = storage_put_mon(3, recv_sp, recv, GEN3_PK3_LEN);
         printf("INJECT_RESULT ok received_species %d stored %d dex %d/%d\n",
                recv_sp, stored ? 1 : 0, storage_count(), storage_capacity());
-        ui_ok();
+        if (stored) ui_ok(); else ui_full();   // amber: traded, but the mon we got wasn't vaulted
     } else {
         printf("INJECT_RESULT %s\n", r == 0 ? "cancelled" : "fail");
         ui_error();
@@ -258,6 +265,15 @@ static void do_inject(int slot) {
         ui_error(); sleep_ms(2000); return;
     }
 
+    // Only Gen 1 and Gen 2 records can go through the Cable Club trade. A Gen 3
+    // .pk3 has a completely different layout — never reinterpret it as a Gen 1/2
+    // struct (it would inject garbage into the cartridge).
+    if (mon_gen != 1 && mon_gen != 2) {
+        printf("INJECT_RESULT fail: slot %d is a Gen %d record; select Gen %d to inject it\n",
+               slot, mon_gen, mon_gen);
+        ui_error(); sleep_ms(2000); return;
+    }
+
     const gen_profile_t *p = gen_profile(current_gen);
     const uint8_t *inject_data = record;
     uint16_t inject_len = len;
@@ -268,7 +284,8 @@ static void do_inject(int slot) {
             ? conv_g1_to_g2_rec(record, conv_buf)
             : conv_g2_to_g1_rec(record, conv_buf);
         if (!ok) {
-            printf("INJECT_RESULT fail: Gen %d species 0x%02X has no Gen %d equivalent\n",
+            printf("INJECT_RESULT fail: Gen %d species 0x%02X can't be converted to Gen %d "
+                   "(species or all of its moves don't exist there)\n",
                    mon_gen, species, current_gen);
             ui_error(); sleep_ms(2000); return;
         }
@@ -283,9 +300,14 @@ static void do_inject(int slot) {
            slot, mon_gen, species, current_gen);
     ui_armed();
 
-    gb_inject_result_t r = inject_run(p, inject_data, inject_len);
+    gb_inject_received_t got;
+    gb_inject_result_t r = inject_run(p, inject_data, inject_len, &got);
     switch (r) {
-        case GB_INJ_OK:       printf("INJECT_RESULT ok\n");         ui_ok();    break;
+        case GB_INJ_OK:
+            printf("INJECT_RESULT ok received_species %d stored %d dex %d/%d\n",
+                   got.species, got.stored ? 1 : 0, storage_count(), storage_capacity());
+            if (got.stored) ui_ok(); else ui_full();  // amber: traded, but the mon we got wasn't vaulted
+            break;
         case GB_INJ_CANCELLED:printf("INJECT_RESULT cancelled\n");  ui_error(); break;
         case GB_INJ_DECLINED: printf("INJECT_RESULT declined\n");   ui_error(); break;
         default:              printf("INJECT_RESULT fail %d\n", (int)r); ui_error(); break;
@@ -320,9 +342,16 @@ static void run_ptgb_multiboot(uint32_t pace) {
     }
 }
 
-// Offer a stored Gen 1/2 mon to PTGB (running on the GBA) as a link trade. Reuses
-// the proven Gen 1/2 inject FSM; PTGB is just the trade partner. Offers the mon
-// in its native generation (PTGB must be set to the matching Gen source).
+// Offer a stored Gen 1/2 mon to PTGB (running on the GBA) as a link trade, in
+// its native generation, by reusing the Gen 1/2 inject FSM.
+//
+// KNOWN LIMITATION (from reading PTGB's source/gameboy_colour.cpp at the pinned
+// commit; not yet tried on hardware): this is not expected to complete. PTGB is
+// not a Cable Club trade partner — it is the link clock master itself (LinkSPI
+// MASTER_256KBPS, and inject_run() is a master too), it sends an exploit payload
+// where a party would go, and it then expects PC-box data packets from the code
+// that payload runs on a real Game Boy. Supporting it means emulating that Game
+// Boy side as a link *slave*; see the README's PTGB status note.
 static void run_ptgb_offer(int slot, uint32_t pace) {
     (void)pace;
     if (slot < 0) slot = storage_last_written_index();
@@ -346,7 +375,7 @@ static void run_ptgb_offer(int slot, uint32_t pace) {
            "On the GBA pick Gen %d as the source and start the trade.\n",
            slot, mon_gen, species, mon_gen);
     ui_armed();
-    gb_inject_result_t r = inject_run(p, record, len);
+    gb_inject_result_t r = inject_run(p, record, len, NULL);
     switch (r) {
         case GB_INJ_OK:        printf("PTGB_RESULT ok — PTGB has the mon; let it write "
                                       "to the Gen 3 cart.\n"); ui_ok(); break;
@@ -421,7 +450,7 @@ static void handle_serial(void) {
 }
 
 int main(void) {
-    usb_console_init();  // composite CDC + WebUSB-vendor console (mobile-capable)
+    usb_console_init();  // WebUSB-vendor console (mobile-capable)
     display_console_init(); // optional touch display: same console on UART1 GPIO4/5
     gb_link_init();
     ui_init();
@@ -433,6 +462,7 @@ int main(void) {
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
            "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w!'=wipe\n"
            "        'P'=multiboot Poke Transporter GB  'o [n]'=send Gen 1/2 mon to it (-> Gen 3 cart)\n"
+           "        'B'=reboot to BOOTSEL\n"
            "Current: Gen %d. Cross-gen injection supported (Gen 1<->2).\n",
            storage_count(), storage_capacity(), current_gen);
     show_idle();
