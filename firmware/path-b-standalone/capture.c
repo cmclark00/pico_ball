@@ -1,6 +1,7 @@
 #include "capture.h"
 #include "gb_link.h"
 #include "ui.h"
+#include "mon_identity.h"
 #include <string.h>
 
 #define NO_INPUT 0xFE
@@ -122,8 +123,8 @@ static void apply_patches(uint8_t *data, int data_len, const uint8_t *patch, int
     }
 }
 
-int extract_mons(const gen_profile_t *p, uint8_t *raw,
-                 uint8_t species[6], uint8_t data[6][DEX_MON_MAX], uint16_t lens[6]) {
+int extract_mons(const gen_profile_t *p, uint8_t *raw, uint8_t species[6],
+                 uint8_t data[6][DEX_MON_MAX], uint16_t lens[6], uint8_t flags[6]) {
     uint8_t *sec1 = raw + p->lens[0];               // party section
     uint8_t *sec2 = sec1 + p->lens[1];              // patch list
     apply_patches(sec1, p->lens[1], sec2, p->lens[2]);
@@ -144,6 +145,10 @@ int extract_mons(const gen_profile_t *p, uint8_t *raw,
         uint8_t *ot = sec1 + p->ot_pos + i * p->name_len;
         uint8_t *nk = sec1 + p->nick_pos + i * p->name_len;
         species[i] = st[0];
+        // Gen 2 marks an Egg only in the party's species list; the struct holds
+        // the species that will hatch.
+        flags[i] = (p->gen == 2 && sec1[p->count_pos + 1 + i] == GP_G2_EGG)
+                   ? MON_FLAG_EGG : 0;
         memcpy(data[i], st, p->mon_len);
         memcpy(data[i] + p->mon_len, ot, p->name_len);
         memcpy(data[i] + p->mon_len + p->name_len, nk, p->name_len);

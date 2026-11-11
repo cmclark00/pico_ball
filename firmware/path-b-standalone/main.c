@@ -39,7 +39,18 @@
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
 static int current_gen = 1;
-static int inject_slot = -1; // dex slot to inject: -1 = most recently captured (USB 'i <n>' overrides)
+// Slot to inject, as a storage slot id (stable while that entry exists), or -1
+// for "the most recently stored mon". Set by 'i <n>'; cleared when that entry is
+// deleted, so a button inject can never silently pick up a different Pokémon.
+static int inject_slot_id = -1;
+
+// Current dump index of the selected slot, or -1 for "most recent".
+static int selected_inject_index(void) {
+    if (inject_slot_id < 0) return -1;
+    int idx = storage_index_of_id(inject_slot_id);
+    if (idx < 0) inject_slot_id = -1;   // entry is gone: fall back to most recent
+    return idx;
+}
 static bool wipe_armed = false; // 'w' arms; '!' confirms (guards the flash erase)
 
 static void dump_all(void) {
@@ -51,6 +62,9 @@ static void dump_all(void) {
         printf("MON %d %d %u ", gen, species, len);
         for (uint16_t j = 0; j < len; j++) printf("%02X", readbuf[j]);
         printf("\n");
+        // Extra facts about entry i ride on their own line, so readers that only
+        // know MON lines are unaffected.
+        if (storage_slot_flags(i) & MON_FLAG_EGG) printf("EGG %d\n", i);
     }
     printf("END\n");
 }
@@ -134,10 +148,11 @@ static void do_capture(void) {
     static uint8_t mondata[6][DEX_MON_MAX];
     uint8_t species[6];
     uint16_t lens[6];
-    int n = extract_mons(p, record, species, mondata, lens);
+    uint8_t flags[6];
+    int n = extract_mons(p, record, species, mondata, lens, flags);
     int stored = 0;
     for (int i = 0; i < n; i++)
-        if (storage_put_mon(current_gen, species[i], mondata[i], lens[i])) stored++;
+        if (storage_put_mon(current_gen, species[i], flags[i], mondata[i], lens[i])) stored++;
 
     if (n > 0) {
         printf("CAPTURE_RESULT ok stored %d dex %d/%d\n",
@@ -155,7 +170,11 @@ static void do_capture(void) {
 // --- Gen 3 standalone capture (two phases: multiboot, then trade) ------------
 // Gen 3 can't use the Cable Club FSM: the board multiboots Gen3-to-GenX into the
 // GBA, the user navigates to its trade screen, then the board runs the trade.
-// `gen3_booted` tracks which phase a tap (or serial m/t) should do next.
+// `gen3_booted` tracks which phase a tap (or serial m/t) should do next. Once
+// the multiboot succeeds it stays set through trades — failed or not — because
+// Gen3-to-GenX keeps running on the GBA and can't be multibooted again until the
+// GBA is power-cycled; a tap then simply retries the trade. Switching generation
+// (or 'm') starts over with a fresh multiboot.
 static bool gen3_booted = false;
 
 static void run_gen3_multiboot(uint32_t pace) {
@@ -185,9 +204,9 @@ static void run_gen3_trade(uint32_t pace) {
     static uint8_t recs[6][GEN3_PK3_LEN];
     int n = gen3_capture_party(pace, recs, 6);
     gb_link_set_gen3(false);
-    gen3_booted = false;
     if (n < 0) {
-        printf("G3T_RESULT fail\n");
+        printf("G3T_RESULT fail — tap again to retry once the GBA is on the trade screen "
+               "(switch generation to multiboot again)\n");
         ui_error();
         sleep_ms(2000);
         return;
@@ -195,7 +214,7 @@ static void run_gen3_trade(uint32_t pace) {
     int stored = 0;
     for (int i = 0; i < n; i++) {
         uint16_t sp = gen3_species(recs[i]);
-        if (storage_put_mon(3, sp, recs[i], GEN3_PK3_LEN)) stored++;
+        if (storage_put_mon(3, sp, 0, recs[i], GEN3_PK3_LEN)) stored++;
         printf("MON3 %d %u ", i, sp);
         for (int b = 0; b < GEN3_PK3_LEN; b++) printf("%02x", recs[i][b]);
         printf("\n");
@@ -233,9 +252,8 @@ static void run_gen3_inject(int slot, uint32_t pace) {
     uint16_t recv_sp = 0;
     int r = gen3_inject_mon(pace, record, (uint16_t)species, recv, &recv_sp);
     gb_link_set_gen3(false);
-    gen3_booted = false;
     if (r == 1) {
-        bool stored = storage_put_mon(3, recv_sp, recv, GEN3_PK3_LEN);
+        bool stored = storage_put_mon(3, recv_sp, 0, recv, GEN3_PK3_LEN);
         printf("INJECT_RESULT ok received_species %d stored %d dex %d/%d\n",
                recv_sp, stored ? 1 : 0, storage_count(), storage_capacity());
         if (stored) ui_ok(); else ui_full();   // amber: traded, but the mon we got wasn't vaulted
@@ -259,6 +277,7 @@ static void do_inject(int slot) {
 
     int mon_gen = 0, species = 0;
     uint16_t len = storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
+    uint8_t flags = storage_slot_flags(slot);
 
     if (len == 0) {
         printf("INJECT_RESULT fail: slot %d empty\n", slot);
@@ -278,6 +297,12 @@ static void do_inject(int slot) {
     const uint8_t *inject_data = record;
     uint16_t inject_len = len;
     static uint8_t conv_buf[DEX_MON_MAX];
+
+    if (mon_gen != current_gen && (flags & MON_FLAG_EGG)) {
+        printf("INJECT_RESULT fail: slot %d is an Egg; it can only go to a Gen %d cartridge\n",
+               slot, mon_gen);
+        ui_error(); sleep_ms(2000); return;
+    }
 
     if (mon_gen != current_gen) {
         bool ok = (mon_gen == 1)
@@ -301,7 +326,7 @@ static void do_inject(int slot) {
     ui_armed();
 
     gb_inject_received_t got;
-    gb_inject_result_t r = inject_run(p, inject_data, inject_len, &got);
+    gb_inject_result_t r = inject_run(p, inject_data, inject_len, flags, &got);
     switch (r) {
         case GB_INJ_OK:
             printf("INJECT_RESULT ok received_species %d stored %d dex %d/%d\n",
@@ -375,7 +400,7 @@ static void run_ptgb_offer(int slot, uint32_t pace) {
            "On the GBA pick Gen %d as the source and start the trade.\n",
            slot, mon_gen, species, mon_gen);
     ui_armed();
-    gb_inject_result_t r = inject_run(p, record, len, NULL);
+    gb_inject_result_t r = inject_run(p, record, len, storage_slot_flags(slot), NULL);
     switch (r) {
         case GB_INJ_OK:        printf("PTGB_RESULT ok — PTGB has the mon; let it write "
                                       "to the Gen 3 cart.\n"); ui_ok(); break;
@@ -400,8 +425,16 @@ static void handle_serial(void) {
             break;
         case 'i': {
             int n = read_uint();
-            if (n >= 0) inject_slot = n;   // explicit index overrides auto
-            do_inject(inject_slot);
+            if (n >= 0) {                  // explicit index: remember that entry
+                int id = storage_slot_id(n);
+                if (id < 0) {
+                    printf("INJECT_RESULT fail: slot %d empty\n", n);
+                    ui_error(); sleep_ms(2000); show_idle();
+                    break;
+                }
+                inject_slot_id = id;
+            }
+            do_inject(selected_inject_index());
             show_idle();
             break;
         }
@@ -436,12 +469,18 @@ static void handle_serial(void) {
             printf("WIPE? send '!' to confirm (any other key cancels)\n");
             break;
         case '!':
-            if (wipe_armed) { storage_wipe(); printf("WIPED %d\n", storage_count()); }
+            if (wipe_armed) {
+                storage_wipe();
+                inject_slot_id = -1;
+                printf("WIPED %d\n", storage_count());
+            }
             wipe_armed = false;
             break;
         case 'r': {
             int n = read_uint();
+            int id = (n >= 0) ? storage_slot_id(n) : -1;
             bool ok = (n >= 0) && storage_delete(n);
+            if (ok && id == inject_slot_id) inject_slot_id = -1;
             printf("DELETED %d %d\n", n, ok ? 1 : 0);
             break;
         }
@@ -479,7 +518,7 @@ int main(void) {
                 if (current_gen == 3 && !gen3_booted)
                     run_gen3_multiboot(100);   // boot first; hold again to inject
                 else
-                    do_inject(inject_slot);
+                    do_inject(selected_inject_index());
             } else if (g == GESTURE_SWITCH_GEN) {
                 current_gen = (current_gen % 3) + 1;   // cycle 1 -> 2 -> 3 -> 1
                 gen3_booted = false;

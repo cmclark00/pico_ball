@@ -26,13 +26,14 @@ typedef struct {
     bool stored;
 } gb_inject_received_t;
 
-// Trade mon_rec into the cartridge (commits the trade).
+// Trade mon_rec into the cartridge (commits the trade). `flags` are the stored
+// MON_FLAG_* bits of mon_rec (a Gen 2 Egg is offered as an Egg).
 // The mon the cartridge gives up is extracted and stored in the dex
 // automatically; `received` (may be NULL) reports its species and whether the
 // store succeeded. mon_rec must be at least mon_len + 2*name_len bytes for the
 // given generation (struct + OT name + nickname).
 gb_inject_result_t inject_run(const gen_profile_t *p,
-                               const uint8_t *mon_rec, uint16_t rec_len,
+                               const uint8_t *mon_rec, uint16_t rec_len, uint8_t flags,
                                gb_inject_received_t *received);
 
 #endif // INJECT_H

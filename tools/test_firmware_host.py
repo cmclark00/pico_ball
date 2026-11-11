@@ -70,7 +70,8 @@ def compile_c(sources, exe, workdir):
 # --- 1. trade FSM vs simulated cartridge --------------------------------------
 def test_trade_fsm(workdir):
     exe = os.path.join(workdir, "test_trade_fsm" + (".exe" if os.name == "nt" else ""))
-    compile_c(["test/test_trade_fsm.c", "capture.c", "inject.c", "gen_profile.c"], exe, workdir)
+    compile_c(["test/test_trade_fsm.c", "capture.c", "inject.c", "gen_profile.c",
+               "mon_identity.c"], exe, workdir)
     res = subprocess.run([exe], capture_output=True, text=True)
     sys.stdout.write(res.stdout)
     if res.returncode != 0:

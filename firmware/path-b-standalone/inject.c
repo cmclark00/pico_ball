@@ -3,6 +3,7 @@
 #include "gb_link.h"
 #include "storage.h"
 #include "ui.h"
+#include "mon_identity.h"
 #include <string.h>
 
 // -- Gen-specific selection/commit control bytes ---------------------------
@@ -121,10 +122,12 @@ static void drain_no_input_if(uint8_t nxt) {
 // Splice the stored mon record into a copy of the baked section-1 template.
 // This gives a valid 1-mon trade block with the actual Pokémon data.
 static void build_sec1(const gen_profile_t *p, const uint8_t *mon_rec,
-                       uint8_t *sec1) {
+                       uint8_t flags, uint8_t *sec1) {
     memcpy(sec1, p->baked[1], p->lens[1]);
-    // Species list: byte immediately after the count (count_pos+1).
-    sec1[p->count_pos + 1] = mon_rec[0];
+    // Species list: byte immediately after the count (count_pos+1). A Gen 2 Egg
+    // is listed as an Egg there; its struct keeps the species that will hatch.
+    bool egg = p->gen == 2 && (flags & MON_FLAG_EGG);
+    sec1[p->count_pos + 1] = egg ? GP_G2_EGG : mon_rec[0];
     // Mon struct, OT name, nickname in their canonical positions.
     memcpy(sec1 + p->mon_pos,  mon_rec,                       p->mon_len);
     memcpy(sec1 + p->ot_pos,   mon_rec + p->mon_len,          p->name_len);
@@ -180,7 +183,7 @@ static void build_sec2(uint8_t *sec1, int sec1_len,
 // -- Main injection entry point --------------------------------------------
 
 gb_inject_result_t inject_run(const gen_profile_t *p,
-                               const uint8_t *mon_rec, uint16_t rec_len,
+                               const uint8_t *mon_rec, uint16_t rec_len, uint8_t flags,
                                gb_inject_received_t *received) {
     if (received) { received->species = 0; received->stored = false; }
     uint16_t min_len = (uint16_t)(p->mon_len + 2 * p->name_len);
@@ -192,7 +195,7 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
     static uint8_t inject_sec2[GB_SEC2_LEN];   // same size for Gen 1 and Gen 2
     static uint8_t inject_sec3[GB_SEC3_MAX];   // Gen 2 mail section
 
-    build_sec1(p, mon_rec, inject_sec1);
+    build_sec1(p, mon_rec, flags, inject_sec1);
     memset(inject_sec2, 0, p->lens[2]);
     build_sec2(inject_sec1, (int)p->lens[1], inject_sec2, (int)p->lens[2]);
     if (p->n_sections > 3) build_sec3(p, mon_rec, rec_len, inject_sec3);
@@ -225,7 +228,8 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
     uint8_t cart_species[6];
     static uint8_t cart_mons[6][DEX_MON_MAX];
     uint16_t cart_lens[6];
-    int cart_count = extract_mons(p, cart_rec, cart_species, cart_mons, cart_lens);
+    uint8_t cart_flags[6];
+    int cart_count = extract_mons(p, cart_rec, cart_species, cart_mons, cart_lens, cart_flags);
 
     // Selection/commit phase.
     const trade_ctrl_t *c = ctrl_for(p->gen);
@@ -261,7 +265,7 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
     // Trade committed. Vault the Pokémon the cartridge gave away, and tell the
     // caller whether that worked — it no longer exists anywhere else.
     if (given_valid) {
-        bool stored = storage_put_mon(p->gen, given_species,
+        bool stored = storage_put_mon(p->gen, given_species, cart_flags[given_idx],
                                       cart_mons[given_idx], cart_lens[given_idx]);
         if (received) { received->species = given_species; received->stored = stored; }
     }
