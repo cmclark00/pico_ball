@@ -30,6 +30,7 @@ target_sources(pico_ball_vault PRIVATE
         cross_gen.c
         gen_profile.c
         mon_identity.c
+        gen3_party.c
         storage.c
         ui.c
         display_console.c # optional Hosyond E32R32P UI over UART1 (GPIO4/5)
@@ -41,6 +42,34 @@ target_sources(pico_ball_vault PRIVATE
         usb_console.c     # WebUSB-vendor console (custom TinyUSB; CDC optional)
         usb_descriptors.c
         )
+
+# On-device Gen 1/2 -> Gen 3 conversion runs the vendored Pokemon Community
+# Conversion Standard (third_party/PCCS, MIT; not redistributed here). It is
+# compiled in when tools/gen_pccs_firmware.py has produced pccs_gen/ (scripts/
+# setup.sh does that); otherwise a stub is linked and the feature reports itself
+# as unavailable.
+set(PCCS_DIR ${CMAKE_CURRENT_LIST_DIR}/../../third_party/PCCS)
+set(PCCS_GEN ${CMAKE_CURRENT_LIST_DIR}/pccs_gen)
+if(EXISTS ${PCCS_GEN}/pccs_tables.c AND EXISTS ${PCCS_DIR}/source/GBPokemon.cpp)
+    message(STATUS "PCCS found: building with on-device Gen 1/2 -> Gen 3 conversion")
+    target_sources(pico_ball_vault PRIVATE
+            pccs_bridge.cpp
+            ${PCCS_GEN}/pccs_tables.c
+            ${PCCS_DIR}/source/GBPokemon.cpp
+            ${PCCS_DIR}/source/Gen1Pokemon.cpp
+            ${PCCS_DIR}/source/Gen2Pokemon.cpp
+            ${PCCS_DIR}/source/Gen3Pokemon.cpp
+            ${PCCS_DIR}/source/Pokemon.cpp
+            ${PCCS_DIR}/source/pokemon_data.cpp
+            )
+    target_include_directories(pico_ball_vault PRIVATE ${PCCS_GEN} ${PCCS_DIR}/include)
+    # PCCS is desktop-style C++ (string streams, sizeable locals): the SDK's
+    # default 2 KB stack is not enough for it.
+    target_compile_definitions(pico_ball_vault PRIVATE PICO_STACK_SIZE=0x4000)
+else()
+    message(STATUS "PCCS not found: building WITHOUT Gen 1/2 -> Gen 3 conversion")
+    target_sources(pico_ball_vault PRIVATE pccs_stub.c)
+endif()
 
 target_link_libraries(pico_ball_vault PRIVATE
         pico_stdlib

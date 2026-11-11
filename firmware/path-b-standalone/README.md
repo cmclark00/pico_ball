@@ -122,12 +122,47 @@ Things to know before you inject:
   the target generation; a Gen 1 mon arrives in Gen 2 with no held item). Going
   Gen 2 → Gen 1, Gen 2-only moves are dropped, and the inject is refused if the
   species doesn't exist in Gen 1 or none of its moves do.
-- **Gen 3 records only go to Gen 3.** A `.pk3` slot is refused in Gen 1/2 mode
-  (and a Gen 1/2 slot in Gen 3 mode) — select the matching generation.
+- **Gen 3 records only go to Gen 3.** A `.pk3` slot is refused in Gen 1/2 mode.
+- **Gen 1/2 → Gen 3.** In Gen 3 mode a Gen 1 or Gen 2 slot is converted on the
+  board and traded in — see "Send a Gen 1/2 Pokémon to a Gen 3 cartridge" below.
 - **Gen 2 Eggs keep their egg state.** An Egg is stored as the Pokémon inside it
   plus an egg marker (shown as an `EGG <index>` line after its `MON` line in the
   dump, and as an "egg" chip in the WebUI), and is offered to the cartridge as an
   Egg again on inject. An Egg can't be converted to Gen 1.
+
+### Send a Gen 1/2 Pokémon to a Gen 3 cartridge (on-device conversion)
+
+The board can recreate a stored Gen 1 or Gen 2 Pokémon as a Gen 3 one and trade
+it into a real Gen 3 cartridge, with no PC and no flashcart. It runs the
+[Pokémon Community Conversion Standard](https://github.com/GearsProgress/Pokemon-Community-Conversion-Standard)
+(PCCS, MIT — the conversion Poke Transporter GB uses) on the board, then sends
+the result through the same Gen3-to-GenX trade as a normal Gen 3 inject:
+
+1. Select Gen 3, multiboot Gen3-to-GenX (`m`, or tap), and reach its trade screen
+   with your Gen 3 cartridge inserted — exactly as for "Capturing Gen 3".
+2. Inject the Gen 1/2 slot: `i <slot>` (or hold ~2 s for the selected slot).
+   The console logs `G3I: converted slot … to Gen 3 species …`.
+3. On the GBA, pick the Pokémon to give in exchange; it is saved to the vault.
+
+What to expect:
+
+- It is a **recreation**, like Pal Park: species, level, moves, nickname and OT
+  are kept; the personality value, IVs, nature and ability are generated. Each
+  inject generates them afresh, and the stored Gen 1/2 original stays in the
+  vault.
+- A Mew or Celebi that PCCS can't recognise as a genuine event Pokémon is
+  replaced by PCCS's own event version (so its level and moves can change), the
+  same as the PC converter does.
+- Eggs can't be converted.
+- The converter is only present in firmware built with PCCS available
+  (`scripts/setup.sh` fetches it; the boot banner says "not in this build"
+  otherwise). `python tools/test_firmware_host.py` converts every Gen 1 and
+  Gen 2 species and checks the result with the trade engine's Gen 3 parser.
+
+> **Status: built and host-tested, not yet run on hardware.** The Gen 3 trade it
+> rides on is the hardware-confirmed inject path, but whether Gen3-to-GenX and
+> the cartridge accept a *converted* Pokémon has not been tried on a real GBA.
+> Try it first with a cartridge save you have backed up.
 
 ### Transfer Gen 1/2 → Gen 3 onto a real cartridge (Poke Transporter GB)
 
@@ -166,8 +201,8 @@ You need: the board, a **GBA** (or SP/Game Boy Player), a **real Gen 3 cartridge
 > Making this path work means the board has to emulate the *Game Boy side* of
 > that protocol as a link **slave** (answer the handshake, accept the payload,
 > then serve the stored Pokémon as box-data packets). Until then, use the
-> file-based conversion (`./pb import` → `vault/dex/gen3/*.pk3`) for Gen 1/2 →
-> Gen 3.
+> on-device conversion above, or the file-based one (`./pb import` →
+> `vault/dex/gen3/*.pk3`), for Gen 1/2 → Gen 3.
 
 ### LED states
 | Color | Meaning |
@@ -238,6 +273,9 @@ export PICO_SDK_PATH=~/pico-sdk     # same SDK used for Path A
 python tools/gen_baked_party.py
 # regenerate the Gen 1 <-> Gen 2 conversion tables (only if the engine pin changes):
 python tools/gen_cross_gen.py
+python tools/gen_gen3_stats.py
+# hand PCCS's tables to the firmware (setup.sh does this; needed for Gen 1/2 -> Gen 3):
+python tools/gen_pccs_firmware.py
 cd firmware/path-b-standalone && mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
 # -> pico_ball_vault.uf2
