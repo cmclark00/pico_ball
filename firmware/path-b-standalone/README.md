@@ -38,7 +38,9 @@ cp firmware/prebuilt/pico_ball_vault.uf2 /media/$USER/RPI-RP2/
 **Gen 3 capture is two taps** (it multiboots the GBA, then trades): with Gen 3
 selected, **tap once** to multiboot Gen3-to-GenX into the GBA (LED → amber); on
 the GBA pick the Gen 3 trade option and reach the trade screen; then **tap again**
-to capture (LED green on success). See "Capturing Gen 3" below.
+to capture (LED green on success). See "Capturing Gen 3" below. If that second
+tap fails (red — e.g. the GBA wasn't on the trade screen yet), just tap again to
+retry the trade; the board only multiboots again after you switch generation.
 
 The **idle LED color shows the mode**: dim **white** = Gen 1, dim **purple** =
 Gen 2, dim **cyan** = Gen 3. When you hold to switch gen, it confirms with a
@@ -106,11 +108,10 @@ current dump, so re-check them with `d` after capturing or deleting.
 
 Things to know before you inject:
 
-- **The dex keeps one entry per species per generation.** The Pokémon the
-  cartridge gives away is stored under its species, so it *replaces* an entry of
-  the same species that is already in the vault. Pull anything you care about
-  off the board first (`import_standalone.py`) if you're about to receive a
-  species you already hold.
+- **The vault keeps one entry per individual Pokémon.** The Pokémon the
+  cartridge gives away gets its own slot; it only replaces an existing entry if
+  it is that same Pokémon (same species, trainer ID and DVs), so a different
+  Pokémon of a species you already hold is never overwritten.
 - **Cross-generation (Gen 1 ↔ Gen 2).** A stored Gen 1 Pokémon can be injected
   into a Gen 2 cartridge and vice versa; the record is converted on the fly
   (species id, types, and the Special / Sp. Atk / Sp. Def stats are rebuilt for
@@ -119,8 +120,10 @@ Things to know before you inject:
   species doesn't exist in Gen 1 or none of its moves do.
 - **Gen 3 records only go to Gen 3.** A `.pk3` slot is refused in Gen 1/2 mode
   (and a Gen 1/2 slot in Gen 3 mode) — select the matching generation.
-- **Gen 2 eggs** are stored as the Pokémon inside the egg; the egg state itself
-  isn't kept, so avoid giving an egg away during an inject.
+- **Gen 2 Eggs keep their egg state.** An Egg is stored as the Pokémon inside it
+  plus an egg marker (shown as an `EGG <index>` line after its `MON` line in the
+  dump, and as an "egg" chip in the WebUI), and is offered to the cartridge as an
+  Egg again on inject. An Egg can't be converted to Gen 1.
 
 ### Transfer Gen 1/2 → Gen 3 onto a real cartridge (Poke Transporter GB)
 
@@ -264,14 +267,16 @@ and the real games' handshakes are only proven on a cartridge.
 - **Fixed baked partner.** Our outgoing party is constant, so it's precomputed
   by the engine into `baked_party.h`; the FSM just replays it. Empty fillers and
   zero trailing drop-bytes (English RBY) make the buffered exchange exact.
-- **Storage: a living dex, keyed by (generation, species).** On capture, the
-  party is split into individual Pokémon and each is **upserted by species** —
-  recapturing a species overwrites just that entry, new species are added. So the
-  vault accumulates toward a full Pokédex across many captures (e.g. capture
-  Cyndaquil at Lv9, level it up and recapture → the Cyndaquil entry updates to
-  Lv15; capturing a Totodile adds a new entry). One 128-byte slot per species per
-  gen, in a reserved flash region; no LittleFS. (After flashing over an older
-  build, send `w` / hit **Wipe all** once to clear old-format data.)
+- **Storage: one slot per individual Pokémon.** On capture, the party is split
+  into individual Pokémon and each is **upserted by identity** — generation,
+  species, original-trainer ID and DVs for Gen 1/2; personality value and trainer
+  ID for Gen 3. Recapturing the same Pokémon updates its entry (capture Cyndaquil
+  at Lv9, level it up and recapture → that entry becomes Lv15); any other Pokémon,
+  including a second one of the same species, gets its own slot. A Gen 1/2 mon
+  that has evolved is a new entry (its species changed); a Gen 3 mon is followed
+  through evolution. 128-byte slots in a reserved flash region (1024 of them); no
+  LittleFS. The slot format is unchanged from the earlier one-per-species scheme
+  apart from flag bits, so an existing vault keeps working without a wipe.
 
 ## Incremental bring-up (recommended before trusting a real trade)
 
