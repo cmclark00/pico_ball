@@ -1,9 +1,10 @@
-// USB console for the standalone vault: drives a composite CDC + WebUSB-vendor
-// device so the same text command protocol ('d','a','c',... + responses) is
-// available over BOTH the CDC interface (desktop Web Serial + Python host tools)
-// and a WebUSB vendor interface (mobile Chrome, which won't expose CDC to
-// WebUSB). printf/getchar route through a custom stdio driver that writes to both
-// and reads from either. The tud_task() background-servicing (low-priority IRQ +
+// USB console for the standalone vault: the text command protocol ('d','a','c',...
+// + responses) over a WebUSB vendor interface, which the WebUI (desktop and
+// mobile Chrome) and the Python host tools use. The default build is vendor-only
+// (tusb_config.h: CFG_TUD_CDC 0 — Android hides a device that also has CDC); with
+// CFG_TUD_CDC 1 the same console is additionally exposed over CDC. printf/getchar
+// route through a custom stdio driver that writes to every enabled interface and
+// reads from any. The tud_task() background-servicing (low-priority IRQ +
 // periodic timer) is adapted from the pico-sdk's pico_stdio_usb so long on-device
 // operations (multiboot, trades) don't stall USB.
 #include "tusb.h"

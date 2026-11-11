@@ -1,7 +1,7 @@
-// TinyUSB config for the standalone vault: a composite CDC + WebUSB-vendor
-// device. CDC keeps desktop Web Serial + the Python host tools working; the
-// vendor (class 0xFF) interface is reachable from mobile Chrome's WebUSB (Android
-// won't expose CDC to WebUSB). See usb_console.c.
+// TinyUSB config for the standalone vault: as built, a single WebUSB vendor
+// (class 0xFF) interface, which desktop and mobile Chrome and the Python host
+// tools all use. A composite CDC + vendor build is still supported by the code
+// (CFG_TUD_CDC below) but is off by default. See usb_console.c.
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
 

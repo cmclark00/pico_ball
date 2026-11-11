@@ -33,7 +33,7 @@ cp firmware/prebuilt/pico_ball_vault.uf2 /media/$USER/RPI-RP2/
 |---|---|
 | **Tap** (short press) | Capture, using the currently selected generation |
 | **Hold ~0.7 s** | Switch generation, cycling **Gen 1 → Gen 2 → Gen 3 → Gen 1** |
-| **Hold ~2 s** | Inject dex slot 0 into a cartridge (LED turns amber to confirm) |
+| **Hold ~2 s** | Inject the selected dex slot into a cartridge — by default the most recently stored Pokémon (LED turns amber to confirm) |
 
 **Gen 3 capture is two taps** (it multiboots the GBA, then trades): with Gen 3
 selected, **tap once** to multiboot Gen3-to-GenX into the GBA (LED → amber); on
@@ -87,17 +87,40 @@ until the board is armed), then tap to capture.
 ### Inject mode (trade a stored Pokémon back into a cartridge)
 
 To inject a Pokémon from the dex back into a cartridge:
-1. Make sure the target gen is selected (tap gen-switch if needed).
+1. Make sure the generation of the **target cartridge** is selected (hold ~0.7 s
+   to cycle it).
 2. **Hold the button ~2 s** — LED turns **amber** to confirm the gesture fired.
    Release the button.
 3. In-game: Cable Club → Trade Center → sit at the table. **Select the Pokémon
    you want to give away** (the board will give you the stored one in return).
-4. LED turns **green** = trade committed. The Pokémon you gave away is
-   automatically saved back to the dex (it won't be lost).
+4. LED turns **green** = trade committed and the Pokémon you gave away was saved
+   to the dex. **Amber** = the trade committed but that Pokémon could **not** be
+   saved (vault full) — the console line `INJECT_RESULT ok … stored 0` says the
+   same. Free a slot before injecting when the vault is close to full.
 
 To choose which stored Pokémon to inject, connect USB and send `i <n>` (slot
 number, 0-indexed from the dex list printed by `d`). The last slot set via the
-USB console persists as the target for button presses.
+USB console persists as the target for button presses until power-off; without
+one, the most recently stored Pokémon is used. Slot numbers are positions in the
+current dump, so re-check them with `d` after capturing or deleting.
+
+Things to know before you inject:
+
+- **The dex keeps one entry per species per generation.** The Pokémon the
+  cartridge gives away is stored under its species, so it *replaces* an entry of
+  the same species that is already in the vault. Pull anything you care about
+  off the board first (`import_standalone.py`) if you're about to receive a
+  species you already hold.
+- **Cross-generation (Gen 1 ↔ Gen 2).** A stored Gen 1 Pokémon can be injected
+  into a Gen 2 cartridge and vice versa; the record is converted on the fly
+  (species id, types, and the Special / Sp. Atk / Sp. Def stats are rebuilt for
+  the target generation; a Gen 1 mon arrives in Gen 2 with no held item). Going
+  Gen 2 → Gen 1, Gen 2-only moves are dropped, and the inject is refused if the
+  species doesn't exist in Gen 1 or none of its moves do.
+- **Gen 3 records only go to Gen 3.** A `.pk3` slot is refused in Gen 1/2 mode
+  (and a Gen 1/2 slot in Gen 3 mode) — select the matching generation.
+- **Gen 2 eggs** are stored as the Pokémon inside the egg; the egg state itself
+  isn't kept, so avoid giving an egg away during an inject.
 
 ### Transfer Gen 1/2 → Gen 3 onto a real cartridge (Poke Transporter GB)
 
@@ -121,11 +144,23 @@ You need: the board, a **GBA** (or SP/Game Boy Player), a **real Gen 3 cartridge
    most recent). The board offers that mon to PTGB over the trade link.
 5. LED **green** = PTGB accepted it; let PTGB finish writing to the Gen 3 cart.
 
-> Status: the on-device multiboot + offer is wired up and the firmware is built,
-> but the board↔PTGB trade hasn't been validated on hardware yet — it reuses the
-> proven Gen 1/2 inject FSM, so it's expected to work, but treat it as **bring-up**
-> (capture console logs; see "Incremental bring-up"). PTGB itself is unmodified and
-> widely used.
+> **Status: the multiboot (`P`) is wired up, but the offer (`o`) is not expected
+> to work as implemented, and has not been validated on hardware.** Steps 3–5
+> above describe the intended flow. Reading PTGB's source at the pinned commit
+> (`source/gameboy_colour.cpp`) shows it is not an ordinary trade partner:
+>
+> - PTGB drives the link clock itself (`LinkSPI` in `MASTER_256KBPS` mode). The
+>   board's Gen 1/2 trade FSM is also a clock master, so the two can't talk.
+> - PTGB doesn't send a party. It sends a payload that runs on the real Game Boy
+>   game, then expects that code to stream the game's **PC box** data back in
+>   PTGB's own packet format (its `box_preamble` / `box_data` states) — not a
+>   Cable Club selection/accept exchange.
+>
+> Making this path work means the board has to emulate the *Game Boy side* of
+> that protocol as a link **slave** (answer the handshake, accept the payload,
+> then serve the stored Pokémon as box-data packets). Until then, use the
+> file-based conversion (`./pb import` → `vault/dex/gen3/*.pk3`) for Gen 1/2 →
+> Gen 3.
 
 ### LED states
 | Color | Meaning |
@@ -138,7 +173,7 @@ You need: the board, a **GBA** (or SP/Game Boy Player), a **real Gen 3 cartridge
 | amber (brief flash) | inject threshold crossed — release to arm |
 | blue | armed, waiting for / talking to the cartridge |
 | green | captured / injected & stored ✅ |
-| amber | captured but the vault is full |
+| amber (after a capture/inject) | done, but not everything could be stored — the vault is full |
 | red | failed / no cartridge responded / cancelled |
 
 ## Get the captures onto a PC
@@ -161,7 +196,7 @@ device at a time, so close the WebUI tab before running `import_standalone.py`
 | `c` | print dex count |
 | `d` | dump the dex (`MON <gen> <species> <len> <hex>` per entry) |
 | `a` | arm and run a Gen 1/2 capture (same as button tap) |
-| `i` or `i <n>` | inject dex slot n (default: last slot set; omit n to reuse) |
+| `i` or `i <n>` | inject dex slot n (omit n to reuse the last slot set, else the most recently stored) |
 | `1` / `2` / `3` | switch to Gen 1 / Gen 2 / Gen 3 |
 | `m` | Gen 3: multiboot Gen3-to-GenX into the GBA (optional `m <us>` pacing) |
 | `t` | Gen 3: trade-capture the party (GBA on its trade screen; optional `t <us>`) |
@@ -193,10 +228,26 @@ WebUI behavior is unchanged.
 export PICO_SDK_PATH=~/pico-sdk     # same SDK used for Path A
 # regenerate the baked partner party (only needed if base.bin changes):
 python tools/gen_baked_party.py
+# regenerate the Gen 1 <-> Gen 2 conversion tables (only if the engine pin changes):
+python tools/gen_cross_gen.py
 cd firmware/path-b-standalone && mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release .. && make -j
 # -> pico_ball_vault.uf2
 ```
+
+### Test without hardware
+
+```bash
+python tools/test_firmware_host.py
+```
+
+This compiles the real `capture.c` / `inject.c` / `cross_gen.c` for the host and
+runs them against a simulated cartridge (section framing, `0xFE` patch lists,
+party splitting, mail, the commit handshake incl. Gen 2's Mew/Celebi success
+byte, vaulting the received Pokémon), and checks the Gen 1 ↔ Gen 2 conversion
+for all 151 species against the trade engine. It needs a C compiler and the
+engine from `scripts/setup.sh`. It does not replace a hardware run: link timing
+and the real games' handshakes are only proven on a cartridge.
 
 ## Design choices (as built vs DESIGN.md)
 

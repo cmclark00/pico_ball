@@ -27,6 +27,26 @@ static const trade_ctrl_t *ctrl_for(int gen) {
     return gen == 2 ? &CTRL_G2 : &CTRL_G1;
 }
 
+// The byte we answer the post-trade "success" sync with. Gen 1 accepts anything
+// in its 0x6x range. Gen 2 has an anti-cloning check: when either traded mon is
+// Mew or Celebi, the game keeps re-syncing until the partner reports the
+// matching action (1 for Mew, 2 for Celebi) and only then saves — answering 0
+// would leave the cartridge stuck on "Waiting...!" with the trade unsaved.
+// Mirrors the engine's GSCTrading.create_success_set.
+#define G2_SPECIES_MEW    151
+#define G2_SPECIES_CELEBI 251
+
+static uint8_t success_byte(const gen_profile_t *p, const trade_ctrl_t *c,
+                            uint8_t our_species, uint8_t their_species) {
+    if (p->gen == 2) {
+        if (our_species == G2_SPECIES_MEW || their_species == G2_SPECIES_MEW)
+            return c->choice_min | 1;
+        if (our_species == G2_SPECIES_CELEBI || their_species == G2_SPECIES_CELEBI)
+            return c->choice_min | 2;
+    }
+    return c->choice_min;
+}
+
 // -- Selection-phase helpers -----------------------------------------------
 
 #define OPTION_CONFIRM  10    // consecutive identical bytes to confirm a choice
@@ -160,7 +180,9 @@ static void build_sec2(uint8_t *sec1, int sec1_len,
 // -- Main injection entry point --------------------------------------------
 
 gb_inject_result_t inject_run(const gen_profile_t *p,
-                               const uint8_t *mon_rec, uint16_t rec_len) {
+                               const uint8_t *mon_rec, uint16_t rec_len,
+                               gb_inject_received_t *received) {
+    if (received) { received->species = 0; received->stored = false; }
     uint16_t min_len = (uint16_t)(p->mon_len + 2 * p->name_len);
     if (rec_len < min_len) return GB_INJ_BAD_RECORD;
 
@@ -198,6 +220,13 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
         off += len;
     }
 
+    // Split the cartridge's party now: the commit handshake needs the species
+    // it gives away, and we vault that mon once the trade is committed.
+    uint8_t cart_species[6];
+    static uint8_t cart_mons[6][DEX_MON_MAX];
+    uint16_t cart_lens[6];
+    int cart_count = extract_mons(p, cart_rec, cart_species, cart_mons, cart_lens);
+
     // Selection/commit phase.
     const trade_ctrl_t *c = ctrl_for(p->gen);
 
@@ -206,6 +235,8 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
     if (choice < 0)        return GB_INJ_TIMEOUT;
     if (choice == c->stop) return GB_INJ_CANCELLED;
     int given_idx = choice - c->choice_min;  // their party slot index
+    bool given_valid = given_idx >= 0 && given_idx < cart_count;
+    uint8_t given_species = given_valid ? cart_species[given_idx] : 0;
 
     // 2. Send our choice: party slot 0 (the injected mon).
     uint8_t nxt = wait_for_no_data(c->our_choice);
@@ -220,23 +251,19 @@ gb_inject_result_t inject_run(const gen_profile_t *p,
     nxt = wait_for_no_data(c->accept);
     drain_no_input_if(nxt);
 
-    // 5. Success handshake: wait for the game's success byte, then send the
-    // first success value (choice_min) back, matching the engine's behavior.
-    // The success range equals the choice range for both Gen 1 and Gen 2.
+    // 5. Success handshake: wait for the game's success byte, then answer with
+    // ours. The success range equals the choice range for both Gen 1 and Gen 2.
     int success = wait_for_range(c->choice_min, c->choice_max);
     if (success < 0) return GB_INJ_TIMEOUT;
-    nxt = wait_for_no_data(c->choice_min);  // send first_trade_index as success byte
+    nxt = wait_for_no_data(success_byte(p, c, mon_rec[0], given_species));
     drain_no_input_if(nxt);
 
-    // Trade committed. Extract and store the Pokémon the cartridge gave away.
-    if (given_idx >= 0) {
-        uint8_t species[6];
-        static uint8_t mondata[6][DEX_MON_MAX];
-        uint16_t lens[6];
-        int n = extract_mons(p, cart_rec, species, mondata, lens);
-        if (given_idx < n)
-            storage_put_mon(p->gen, species[given_idx],
-                            mondata[given_idx], lens[given_idx]);
+    // Trade committed. Vault the Pokémon the cartridge gave away, and tell the
+    // caller whether that worked — it no longer exists anywhere else.
+    if (given_valid) {
+        bool stored = storage_put_mon(p->gen, given_species,
+                                      cart_mons[given_idx], cart_lens[given_idx]);
+        if (received) { received->species = given_species; received->stored = stored; }
     }
 
     return GB_INJ_OK;

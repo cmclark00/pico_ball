@@ -198,10 +198,15 @@ def build_inject_party(trader, record_bytes):
     return party
 
 
-def local_inject_commit(trader):
+def local_inject_commit(trader, our_party=None, cart_party=None):
     """Drive the trade-commit handshake directly with the cartridge, with no
     remote peer: we always offer our mon (party index 0) and always accept.
     Mirrors do_trade's device-facing byte sequence for that generation.
+
+    our_party / cart_party (Gen 1/2) are the party we sent and the one the
+    cartridge sent. Gen 2 needs them: when either traded mon is Mew or Celebi
+    the game only finishes (and saves) once we answer its success sync with the
+    matching anti-cloning value, which depends on the two species.
 
     Returns (committed: bool, given_up_index: int|None) where given_up_index is
     the cartridge's party slot it traded away (so the caller can vault it).
@@ -235,7 +240,12 @@ def local_inject_commit(trader):
         nxt = trader.wait_for_no_input(nxt)
 
     # 5. Success handshake (commits the swap on both sides).
-    success_set = trader.create_success_set([0, 0])
+    traded = [0, 0]
+    if (our_party is not None and cart_party is not None
+            and 0 <= given_up_index < cart_party.get_party_size()):
+        traded = [our_party.pokemon[0].get_species(),
+                  cart_party.pokemon[given_up_index].get_species()]
+    success_set = trader.create_success_set(traded)
     success_byte = list(success_set)[0]
     trader.wait_for_success(nxt, success_set)
     nxt = trader.swap_byte(success_byte)

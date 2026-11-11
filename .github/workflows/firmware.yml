@@ -56,6 +56,16 @@ jobs:
       - name: Init TinyUSB submodule
         run: git -C pico-sdk submodule update --init --depth 1 lib/tinyusb
 
+      # SDK 2.1.1's host-side pioasm relies on <cstdint> being pulled in
+      # transitively, which the runner's GCC 15 no longer does ("'uint8_t' does
+      # not name a type"). Add the include rather than moving the SDK pin; drop
+      # this step when PICO_SDK_REF is bumped to a release that has the fix.
+      - name: Patch pioasm for newer host GCC
+        run: |
+          sed -i '1i #include <cstdint>' \
+            pico-sdk/tools/pioasm/pio_types.h \
+            pico-sdk/tools/pioasm/output_format.h
+
       - name: Generate baked multiboot source
         run: ./scripts/setup.sh
 
