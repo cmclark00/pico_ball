@@ -102,7 +102,11 @@ hand someone a flashed board and they're set. See
 Park → … → HOME chain on real hardware. **This path is not working yet:** the
 board can multiboot PTGB, but PTGB expects to talk to a real Game Boy game (it
 clocks the link itself and reads the game's PC boxes through its own protocol),
-not to a trade partner — see the status note in that README. Use option B today.
+not to a trade partner — see the status note in that README. What the board can
+do instead is convert a stored Gen 1/2 Pokémon itself (it runs PCCS) and trade it
+into the Gen 3 cartridge through Gen3-to-GenX; that is built and host-tested but
+not yet tried on hardware ("Send a Gen 1/2 Pokémon to a Gen 3 cartridge" in that
+README).
 
 **B. As a file, for PKHeX/emulators.** `scripts/setup.sh` also builds a host
 converter (PCCS), so pulling captures off the board auto-writes a Gen 3 box `.pk3`

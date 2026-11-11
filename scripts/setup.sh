@@ -113,6 +113,10 @@ if command -v c++ >/dev/null 2>&1 && command -v make >/dev/null 2>&1; then
 else
   echo "    skipped build: need a C++ compiler + make. Gen 3 transfer disabled."
 fi
+# Hand PCCS's data tables to the standalone firmware (on-device Gen 1/2 -> Gen 3
+# conversion). Writes nothing if the tables weren't generated above; the firmware
+# then builds without that feature.
+python3 tools/gen_pccs_firmware.py | sed 's/^/    /'
 
 # --- Poke Transporter GB multiboot ROM (standalone Gen 1/2 -> Gen 3 on-cart) ---
 # For the no-flashcart, on-cartridge transfer: the board multiboots PTGB into the

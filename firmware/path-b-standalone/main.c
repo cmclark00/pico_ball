@@ -23,6 +23,7 @@
 //   Hold ~2s   -> inject the selected slot (default: most recently stored mon;
 //                 Gen 1 <-> Gen 2 is auto-converted if needed)
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "gb_link.h"
 #include "capture.h"
@@ -33,6 +34,8 @@
 #include "ui.h"
 #include "gen3_multiboot.h"
 #include "gen3_trade.h"
+#include "gen3_party.h"
+#include "pccs_bridge.h"
 #include "usb_console.h"
 #include "display_console.h"
 #include "pico/bootrom.h"
@@ -260,16 +263,53 @@ static void do_capture_gen3(void) {
     else run_gen3_trade(1000);
 }
 
-// Inject a stored Gen 3 mon back into a cartridge. The GBA must already be on the
+// Turn a stored Gen 1/2 record into a Gen 3 party record, in place in `record`:
+// PCCS recreates it as a Gen 3 box Pokémon (Pal-Park style — species, level,
+// moves, nickname and OT kept; PID / IVs / nature / ability generated), then the
+// party-only fields are worked out. Returns the Gen 3 species, or 0 on failure
+// (after printing why).
+static int convert_slot_to_gen3(int slot, int mon_gen, uint16_t len, uint8_t flags) {
+    static uint8_t box[PCCS_BOX_LEN];
+    static uint8_t party[GEN3_PARTY_LEN];
+    if (!pccs_available()) {
+        printf("INJECT_RESULT fail: slot %d is Gen %d and this firmware was built without the "
+               "Gen 1/2 -> Gen 3 converter (PCCS)\n", slot, mon_gen);
+        return 0;
+    }
+    if (flags & MON_FLAG_EGG) {
+        printf("INJECT_RESULT fail: slot %d is an Egg; Eggs can't be converted to Gen 3\n", slot);
+        return 0;
+    }
+    if (!pccs_convert_record(mon_gen, record, len, box) || !gen3_party_from_box(box, party)) {
+        printf("INJECT_RESULT fail: slot %d (Gen %d) could not be converted to Gen 3\n",
+               slot, mon_gen);
+        return 0;
+    }
+    memcpy(record, party, GEN3_PARTY_LEN);
+    return gen3_species(record);
+}
+
+// Inject a stored mon into a Gen 3 cartridge. The GBA must already be on the
 // Gen3-to-GenX trade screen (multiboot first). Select your give-away on the GBA;
-// the mon it gives back is vaulted so nothing is lost.
+// the mon it gives back is vaulted so nothing is lost. A Gen 3 slot is traded
+// as-is; a Gen 1/2 slot is converted to Gen 3 first (the stored original stays).
 static void run_gen3_inject(int slot, uint32_t pace) {
     if (slot < 0) slot = storage_last_written_index();
     int mon_gen = 0, species = 0;
     uint16_t len = (slot < 0) ? 0
         : storage_read_slot(slot, &mon_gen, &species, record, sizeof(record));
-    if (len == 0 || mon_gen != 3) {
-        printf("INJECT_RESULT fail: slot %d is not a Gen 3 record\n", slot);
+    if (len == 0) {
+        printf("INJECT_RESULT fail: slot %d empty\n", slot);
+        ui_error(); sleep_ms(2000); return;
+    }
+    if (mon_gen == 1 || mon_gen == 2) {
+        int src_species = species;
+        species = convert_slot_to_gen3(slot, mon_gen, len, storage_slot_flags(slot));
+        if (species == 0) { ui_error(); sleep_ms(2000); return; }
+        printf("G3I: converted slot %d (Gen %d species 0x%02X) to Gen 3 species %d\n",
+               slot, mon_gen, src_species, species);
+    } else if (mon_gen != 3) {
+        printf("INJECT_RESULT fail: slot %d is not a Gen 1-3 record\n", slot);
         ui_error(); sleep_ms(2000); return;
     }
     printf("G3I: injecting slot %d (Gen 3 species %d) — pick your give-away on the GBA, "
@@ -537,8 +577,9 @@ int main(void) {
            "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w!'=wipe\n"
            "        'P'=multiboot Poke Transporter GB  'o [n]'=send Gen 1/2 mon to it (-> Gen 3 cart)\n"
            "        'B'=reboot to BOOTSEL  'v'=version\n"
-           "Current: Gen %d. Cross-gen injection supported (Gen 1<->2).\n",
-           PB_VERSION, storage_count(), storage_capacity(), current_gen);
+           "Current: Gen %d. Cross-gen injection: Gen 1<->2, and Gen 1/2 -> Gen 3%s.\n",
+           PB_VERSION, storage_count(), storage_capacity(), current_gen,
+           pccs_available() ? "" : " (not in this build)");
     show_idle();
 
     bool prev = false;
