@@ -15,6 +15,7 @@
 //   'r' <n>  -> delete record n (digits terminated by newline)
 //   'w!'     -> wipe the whole vault ('w' arms, '!' confirms)
 //   'B'      -> reboot into BOOTSEL
+//   'v'      -> print the firmware version
 //
 // Button gestures:
 //   Tap        -> capture (current gen; Gen 3 = multiboot, then tap again to capture)
@@ -35,6 +36,12 @@
 #include "usb_console.h"
 #include "display_console.h"
 #include "pico/bootrom.h"
+
+// Build identifier (git describe), set by CMake; 'v' prints it so the WebUI,
+// the host tools and the display can tell which firmware a board is running.
+#ifndef PB_VERSION
+#define PB_VERSION "unknown"
+#endif
 
 static uint8_t record[GB_CAPTURE_MAX];
 static uint8_t readbuf[GB_CAPTURE_MAX + 16];
@@ -131,6 +138,27 @@ static gesture_t read_gesture(void) {
            ? GESTURE_SWITCH_GEN : GESTURE_TAP;
 }
 
+// What a failed capture / inject most likely means, appended to the result line
+// after the numeric code (which the docs and older tools still refer to).
+static const char *capture_fail_reason(gb_capture_result_t r) {
+    switch (r) {
+        case GB_CAP_NO_GAME:   return "no game at the trade table (check the cable, then sit at the table)";
+        case GB_CAP_HANDSHAKE: return "handshake timed out";
+        case GB_CAP_SECTION:   return "lost sync during the data exchange (try again; a larger GB_LINK_PACING_US may help)";
+        default:               return "unknown";
+    }
+}
+
+static const char *inject_fail_reason(gb_inject_result_t r) {
+    switch (r) {
+        case GB_INJ_BAD_RECORD: return "stored record is too short for this generation";
+        case GB_INJ_NO_GAME:    return "no game at the trade table (check the cable, then sit at the table)";
+        case GB_INJ_SECTION:    return "lost sync during the data exchange (try again)";
+        case GB_INJ_TIMEOUT:    return "timed out waiting for a choice in the trade menu";
+        default:                return "unknown";
+    }
+}
+
 static void do_capture(void) {
     const gen_profile_t *p = gen_profile(current_gen);
     printf("Armed (Gen %d). Sit at the Trade Center table and select a Pokémon...\n",
@@ -138,7 +166,7 @@ static void do_capture(void) {
     ui_armed();
     gb_capture_result_t r = capture_run(p, record);
     if (r != GB_CAP_OK) {
-        printf("CAPTURE_RESULT fail %d\n", (int)r);
+        printf("CAPTURE_RESULT fail %d: %s\n", (int)r, capture_fail_reason(r));
         ui_error();
         sleep_ms(2000);
         return;
@@ -335,7 +363,10 @@ static void do_inject(int slot) {
             break;
         case GB_INJ_CANCELLED:printf("INJECT_RESULT cancelled\n");  ui_error(); break;
         case GB_INJ_DECLINED: printf("INJECT_RESULT declined\n");   ui_error(); break;
-        default:              printf("INJECT_RESULT fail %d\n", (int)r); ui_error(); break;
+        default:
+            printf("INJECT_RESULT fail %d: %s\n", (int)r, inject_fail_reason(r));
+            ui_error();
+            break;
     }
     sleep_ms(2500);
 }
@@ -406,7 +437,10 @@ static void run_ptgb_offer(int slot, uint32_t pace) {
                                       "to the Gen 3 cart.\n"); ui_ok(); break;
         case GB_INJ_CANCELLED: printf("PTGB_RESULT cancelled\n"); ui_error(); break;
         case GB_INJ_DECLINED:  printf("PTGB_RESULT declined\n");  ui_error(); break;
-        default:               printf("PTGB_RESULT fail %d\n", (int)r); ui_error(); break;
+        default:
+            printf("PTGB_RESULT fail %d: %s\n", (int)r, inject_fail_reason(r));
+            ui_error();
+            break;
     }
     sleep_ms(2500);
 }
@@ -464,6 +498,7 @@ static void handle_serial(void) {
             break;
         }
         case 'B': printf("BOOTSEL\n"); sleep_ms(50); reset_usb_boot(0, 0); break;
+        case 'v': printf("VERSION %s\n", PB_VERSION); break;
         case 'w':
             wipe_armed = true;
             printf("WIPE? send '!' to confirm (any other key cancels)\n");
@@ -495,15 +530,15 @@ int main(void) {
     ui_init();
 
     sleep_ms(300);
-    printf("\npico_ball standalone vault. Stored %d/%d.\n"
+    printf("\npico_ball standalone vault (%s). Stored %d/%d.\n"
            "Tap = capture | Hold ~0.7s = switch gen (1>2>3) | Hold ~2s = inject last capture (USB 'i n' picks)\n"
            "Gen 3: tap multiboots the GBA, then (on its trade screen) tap again to capture.\n"
            "Serial: 'a'=capture 'i [n]'=inject 'c'=count 'd'=dump '1'/'2'/'3'=gen\n"
            "        'm'=gen3 multiboot 't'=gen3 trade 'r n'=delete 'w!'=wipe\n"
            "        'P'=multiboot Poke Transporter GB  'o [n]'=send Gen 1/2 mon to it (-> Gen 3 cart)\n"
-           "        'B'=reboot to BOOTSEL\n"
+           "        'B'=reboot to BOOTSEL  'v'=version\n"
            "Current: Gen %d. Cross-gen injection supported (Gen 1<->2).\n",
-           storage_count(), storage_capacity(), current_gen);
+           PB_VERSION, storage_count(), storage_capacity(), current_gen);
     show_idle();
 
     bool prev = false;
