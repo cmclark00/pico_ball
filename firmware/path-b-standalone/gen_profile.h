@@ -38,6 +38,14 @@ static inline int gp_is_mail_item(uint8_t item) {
     return item == 0x9E || (item >= 0xB5 && item <= 0xBD);
 }
 
+// Gen 2 mail section: the link can't carry 0xFE, so the game replaces any 0xFE
+// in the six sender/metadata entries (which hold the author's trainer ID) with
+// 0xFF and lists their 1-based offsets, 0xFF-terminated, in a patch list at the
+// end of the same section. (Engine: patch_set_base_pos[1] / start_info_pos[1].)
+#define GP_MAIL_PATCH_BASE  0xC6    // first patched byte = first sender entry
+#define GP_MAIL_PATCH_START 0x11A   // patch list position within the section
+#define GP_MAIL_PATCH_SPAN  (6 * 0x0E)  // bytes the list can refer to
+
 // Gen 2 party species-list entry for an Egg (the struct keeps the real species).
 #define GP_G2_EGG 0xFD
 

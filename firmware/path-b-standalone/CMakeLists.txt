@@ -6,6 +6,17 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 add_executable(pico_ball_vault)
 
+# Stamp the build with its git revision (the 'v' console command prints it).
+# Evaluated at configure time; "unknown" outside a git checkout.
+execute_process(COMMAND git describe --always --dirty --tags
+        WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+        OUTPUT_VARIABLE PB_GIT_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT PB_GIT_VERSION)
+    set(PB_GIT_VERSION "unknown")
+endif()
+message(STATUS "pico_ball firmware version: ${PB_GIT_VERSION}")
+target_compile_definitions(pico_ball_vault PRIVATE PB_VERSION="${PB_GIT_VERSION}")
+
 pico_generate_pio_header(pico_ball_vault ${CMAKE_CURRENT_LIST_DIR}/spi.pio)
 pico_generate_pio_header(pico_ball_vault ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
 

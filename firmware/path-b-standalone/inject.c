@@ -148,6 +148,19 @@ static void build_sec3(const gen_profile_t *p, const uint8_t *mon_rec,
         memcpy(sec3 + p->mail_pos, mon_rec + base_len, p->mail_len);
         memcpy(sec3 + p->mail_sender_pos,
                mon_rec + base_len + p->mail_len, p->mail_sender_len);
+
+        // 0xFE can't cross the link. In the sender entries (the author's trainer
+        // ID can contain it) patch it out and list the offset, as the game does;
+        // mail text never legitimately holds 0xFE, so just neutralise it there.
+        int wi = GP_MAIL_PATCH_START;
+        for (int j = 0; j < GP_MAIL_PATCH_SPAN && wi < p->lens[idx] - 1; j++) {
+            if (sec3[GP_MAIL_PATCH_BASE + j] != NO_INPUT) continue;
+            sec3[GP_MAIL_PATCH_BASE + j] = 0xFF;
+            sec3[wi++] = (uint8_t)(j + 1);
+        }
+        sec3[wi] = 0xFF;   // list terminator
+        for (int j = 0; j < GP_MAIL_PATCH_BASE; j++)
+            if (sec3[j] == NO_INPUT) sec3[j] = 0xFF;
     }
 }
 

@@ -123,6 +123,18 @@ static void apply_patches(uint8_t *data, int data_len, const uint8_t *patch, int
     }
 }
 
+// Restore the 0xFE bytes the game patched out of the mail senders (see
+// GP_MAIL_PATCH_*). Without this a mail author's trainer ID containing 0xFE
+// would be stored as 0xFF.
+static void apply_mail_patches(uint8_t *mail, int len) {
+    for (int i = GP_MAIL_PATCH_START; i < len; i++) {
+        uint8_t pos = mail[i];
+        if (pos == 0xFF) break;
+        if (pos >= 1 && pos <= GP_MAIL_PATCH_SPAN)
+            mail[GP_MAIL_PATCH_BASE + pos - 1] = 0xFE;
+    }
+}
+
 int extract_mons(const gen_profile_t *p, uint8_t *raw, uint8_t species[6],
                  uint8_t data[6][DEX_MON_MAX], uint16_t lens[6], uint8_t flags[6]) {
     uint8_t *sec1 = raw + p->lens[0];               // party section
@@ -132,11 +144,12 @@ int extract_mons(const gen_profile_t *p, uint8_t *raw, uint8_t species[6],
     int count = sec1[p->count_pos];
     if (count < 1 || count > 6) return 0;
 
-    // Mail (Gen 2) lives in the last section, untouched by the patch pass above.
-    const uint8_t *msec = NULL;
+    // Mail (Gen 2) lives in the last section, which carries its own patch list.
+    uint8_t *msec = NULL;
     if (p->mail_len) {
         msec = raw;
         for (int s = 0; s < p->n_sections - 1; s++) msec += p->lens[s];
+        apply_mail_patches(msec, p->lens[p->n_sections - 1]);
     }
 
     uint16_t base_len = p->mon_len + 2 * p->name_len;

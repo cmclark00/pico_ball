@@ -118,7 +118,8 @@ typedef struct {
     uint8_t sec1[GB_SEC1_MAX];      // party section as the game holds it (real 0xFE bytes)
     uint8_t wire1[GB_SEC1_MAX];     // ...as sent (0xFE patched out)
     uint8_t sec2[GB_SEC2_LEN];      // patch list
-    uint8_t sec3[GB_SEC3_MAX];      // mail (Gen 2)
+    uint8_t sec3[GB_SEC3_MAX];      // mail (Gen 2), real bytes
+    uint8_t wire3[GB_SEC3_MAX];     // ...as sent (0xFE patched out of the senders)
     int count;
 } cart_party_t;
 
@@ -166,6 +167,25 @@ static void game_patch(const gen_profile_t *p, cart_party_t *cp) {
     }
 }
 
+// The game's mail patching: 0xFE in the sender entries -> 0xFF + offset list.
+static void game_patch_mail(cart_party_t *cp) {
+    int w = GP_MAIL_PATCH_START;
+    memcpy(cp->wire3, cp->sec3, sizeof(cp->wire3));
+    for (int j = 0; j < GP_MAIL_PATCH_SPAN; j++) {
+        if (cp->wire3[GP_MAIL_PATCH_BASE + j] == 0xFE) {
+            cp->wire3[GP_MAIL_PATCH_BASE + j] = 0xFF;
+            cp->wire3[w++] = (uint8_t)(j + 1);
+        }
+    }
+    cp->wire3[w] = 0xFF;
+}
+
+// The game applying a mail patch list we sent it.
+static void game_unpatch_mail(uint8_t *sec3, int len) {
+    for (int i = GP_MAIL_PATCH_START; i < len && sec3[i] != 0xFF; i++)
+        sec3[GP_MAIL_PATCH_BASE + sec3[i] - 1] = 0xFE;
+}
+
 // The game applying a patch list we sent it.
 static void game_unpatch(uint8_t *sec1, const uint8_t *sec2, int sec2_len) {
     int part = 0;
@@ -187,6 +207,7 @@ static void script_section(int index, uint8_t starter, int preamble,
 static void start_cart(const gen_profile_t *p, cart_party_t *cp) {
     memset(&cart, 0, sizeof(cart));
     game_patch(p, cp);
+    game_patch_mail(cp);
 
     // Cable Club handshake, with a few idle bytes first so the retry loop runs.
     script_put(0x00); script_put(0x00);
@@ -202,7 +223,7 @@ static void start_cart(const gen_profile_t *p, cart_party_t *cp) {
     script_section(0, 0xFD, 3, rnd, p->lens[0]);
     script_section(1, 0xFD, 4, cp->wire1, p->lens[1]);
     script_section(2, 0xFD, 3, cp->sec2, p->lens[2]);
-    if (p->n_sections > 3) script_section(3, 0x20, 5, cp->sec3, p->lens[3]);
+    if (p->n_sections > 3) script_section(3, 0x20, 5, cp->wire3, p->lens[3]);
 }
 
 // What we sent the game for section `index` (see trade_capture_section: our
@@ -239,6 +260,8 @@ static void test_capture(int gen) {
         for (int j = 0; j < p->mail_len; j++) cp.sec3[1 * p->mail_len + j] = (uint8_t)(0x81 + j);
         for (int j = 0; j < p->mail_sender_len; j++)
             cp.sec3[p->mail_sender_pos + 1 * p->mail_sender_len + j] = (uint8_t)(0xC1 + j);
+        // The author's trainer ID contains a byte the link can't carry.
+        cp.sec3[p->mail_sender_pos + 1 * p->mail_sender_len + 0x0B] = 0xFE;
     }
     start_cart(p, &cp);
 
@@ -298,7 +321,10 @@ static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
     rec[0x09] = 0xFE;
     rec[p->mon_len - 1] = 0xFE;
     if (gen == 2) rec[1] = with_mail ? 0xB5 : 0x03;
-    if (with_mail) rec_len = (uint16_t)(base_len + p->mail_len + p->mail_sender_len);
+    if (with_mail) {
+        rec_len = (uint16_t)(base_len + p->mail_len + p->mail_sender_len);
+        rec[base_len + p->mail_len + 0x0B] = 0xFE;   // author ID byte the link can't carry
+    }
 
     memset(&store, 0, sizeof(store));
     store.accept = vault_ok;
@@ -326,9 +352,13 @@ static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
     CHECK(memcmp(s1 + p->nick_pos, rec + p->mon_len + p->name_len, p->name_len) == 0,
           "nickname differs");
     if (p->n_sections > 3) {
-        const uint8_t *s3 = sent_section(3);
+        static uint8_t s3[GB_SEC3_MAX];
+        memcpy(s3, sent_section(3), p->lens[3]);
         const uint8_t *tmpl = p->baked[3];
+        for (int j = 0; j < p->lens[3]; j++)
+            if (s3[j] == NO_INPUT) { CHECK(0, "raw 0xFE sent at mail offset 0x%X", j); break; }
         if (with_mail) {
+            game_unpatch_mail(s3, p->lens[3]);
             CHECK(memcmp(s3 + p->mail_pos, rec + base_len, p->mail_len) == 0, "mail differs");
             CHECK(memcmp(s3 + p->mail_sender_pos, rec + base_len + p->mail_len,
                          p->mail_sender_len) == 0, "mail sender differs");

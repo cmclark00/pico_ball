@@ -10,7 +10,11 @@ This is the **as-built** firmware. It revises the original
 
 ## Flash it
 
-A prebuilt UF2 is at `firmware/prebuilt/pico_ball_vault.uf2`.
+A prebuilt UF2 is at `firmware/prebuilt/pico_ball_vault.uf2`. It is a snapshot
+and can lag behind the source; tagged builds are published on the repository's
+Releases page (pushing a `v*` tag makes CI build and attach the `.uf2`), and
+every CI run uploads one as a workflow artifact. Send `v` to a flashed board to
+see which revision it is running. CI builds don't include Poke Transporter GB.
 
 ```bash
 # Hold BOOTSEL, plug in USB -> RPI-RP2 mounts
@@ -208,6 +212,7 @@ device at a time, so close the WebUI tab before running `import_standalone.py`
 | `r <n>` | delete dex slot n |
 | `w!` | wipe the whole vault (`w` arms, `!` confirms — a stray `w` is harmless) |
 | `B` | reboot into BOOTSEL (drag-and-drop a new `.uf2`) |
+| `v` | print the firmware version (`VERSION <git revision>`) |
 
 `import_standalone.py` saves each dex entry as a `.pk1`/`.pk2`/`.pk3` + `.json` in
 `vault/dex/` (same format as Path A — so you can also use `inject.py` from a PC).
@@ -294,7 +299,8 @@ run on hardware. Validate in stages using the USB console:
 5. **`d` dump sanity:** the raw record should be 625 bytes; section 1 (party)
    should decode to your real Pokémon.
 
-If a capture fails (red / console "code N"), the result code tells you where:
+If a capture fails (red), the console says why after the result code
+(`CAPTURE_RESULT fail 3: lost sync …`). The code tells you where:
 `1` = never reached the table (arming/cabling/timing), `3` = a section failed to
 sync (pacing — try a larger `GB_LINK_PACING_US`). Capture the console log and we
 tune from there.
