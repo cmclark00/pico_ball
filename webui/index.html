@@ -216,6 +216,7 @@ function card(mon, index) {
     mon.gen === 3 ? '<span class="chip">RSE</span>' : "",
     mon.shiny ? '<span class="chip flag">✨ shiny</span>' : "",
     mon.nicknamed ? '<span class="chip flag">nicknamed</span>' : "",
+    mon.egg ? '<span class="chip flag">egg</span>' : "",
     mon.tradeEvolves ? '<span class="chip flag">trade-evolves</span>' : "",
     mon.checksumValid === false ? '<span class="chip flag">bad checksum</span>' : "",
   ].join("");
@@ -279,7 +280,7 @@ function render(entries) {
   out.innerHTML = "";
   if (!entries.length) {
     out.innerHTML = `<p class="hint">The vault dex is empty. Capture some Pokémon at
-      the Cable Club (recapturing a species updates its dex entry), then Refresh.</p>`;
+      the Cable Club (recapturing the same Pokémon updates its entry), then Refresh.</p>`;
     return;
   }
   for (const gen of [1, 2, 3]) {
@@ -492,6 +493,11 @@ async function dump() {
         entries.push({ gen, species, index: entries.length,
                        mon: decodeMonRecord(hexToBytes(hex), gen) });
       }
+    } else if (l.startsWith("EGG ")) {
+      // "EGG <index>": the entry just listed is a Gen 2 Egg (firmware keeps the
+      // egg state beside the record; older firmware never sends this line).
+      const e = entries[parseInt(l.split(/\s+/)[1], 10)];
+      if (e && e.mon) e.mon.egg = true;
     }
   });
   setStatus(`Connected · ${entries.length} in dex`);

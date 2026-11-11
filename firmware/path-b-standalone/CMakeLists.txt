@@ -18,6 +18,7 @@ target_sources(pico_ball_vault PRIVATE
         inject.c
         cross_gen.c
         gen_profile.c
+        mon_identity.c
         storage.c
         ui.c
         display_console.c # optional Hosyond E32R32P UI over UART1 (GPIO4/5)

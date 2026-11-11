@@ -4,12 +4,11 @@
 #include "hardware/sync.h"
 #include <string.h>
 
-// Dex layout: a contiguous array of fixed 128-byte slots in a reserved flash
-// region. Slots are keyed by (gen, species) via a linear upsert — recapturing a
-// species rewrites its slot, new species take the first free slot. This is
-// generation-agnostic (Gen 3 species exceed 255, so the old idx=(gen-1)*256+
-// species scheme with a 1-byte species no longer works). Flash erases are per
-// 4 KB sector (32 slots), so writing a slot is a read-modify-write of its sector.
+// Vault layout: a contiguous array of fixed 128-byte slots in a reserved flash
+// region. A linear upsert keys slots by individual Pokémon (mon_identity.h):
+// storing a mon already in the vault rewrites its slot, anything else takes the
+// first free slot. Flash erases are per 4 KB sector (32 slots), so writing a
+// slot is a read-modify-write of its sector.
 #define SECTOR_SIZE FLASH_SECTOR_SIZE              // 4096
 #define SLOT_SIZE 128
 #define SLOTS_PER_SECTOR (SECTOR_SIZE / SLOT_SIZE) // 32
@@ -17,14 +16,19 @@
 #define DEX_SLOTS (RESERVED_SECTORS * SLOTS_PER_SECTOR)  // 1024 slots
 #define VAULT_OFFSET (PICO_FLASH_SIZE_BYTES - (RESERVED_SECTORS * SECTOR_SIZE))
 
-// Slot header (8 B): ['P','3'][gen][species_lo][species_hi][len][cnt_lo][cnt_hi]
-// then payload. species is 16-bit (Gen 3 internal ids reach ~411); len is one
-// byte (records are <=120). Bytes [6..7] are a monotonic 16-bit write counter.
+// Slot header (8 B): ['P','3'][gen|flags][species_lo][species_hi][len][cnt_lo][cnt_hi]
+// then payload. The generation is the low nibble of byte 2 and MON_FLAG_* bits
+// the high nibble (slots written before flags existed have none set, so they
+// read back unchanged). species is 16-bit (Gen 3 internal ids reach ~411); len
+// is one byte (records are <=120). Bytes [6..7] are a monotonic 16-bit write
+// counter.
 // The 'P','3' magic supersedes the old 'P','K' format — old slots read as unused
 // (wipe once after upgrading).
 #define HDR_LEN 8
 #define MAX_PAYLOAD (SLOT_SIZE - HDR_LEN)          // 120
 #define NO_COUNTER 0xFFFF
+#define GEN_MASK 0x0F
+#define FLAG_MASK 0xF0
 
 static const uint8_t MAGIC[2] = {'P', '3'};
 
@@ -75,17 +79,20 @@ static uint16_t max_counter(void) {
     return mx;
 }
 
-bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
+bool storage_put_mon(int gen, int species, uint8_t flags,
+                     const uint8_t *data, uint16_t len) {
     if (gen < 1 || gen > 3 || species < 1 || species > 0xFFFF) return false;
     if (len > MAX_PAYLOAD) return false;
 
-    // Find an existing (gen, species) slot to overwrite, else the first free one.
+    // Find the slot already holding this individual, else the first free one.
     int idx = -1, free_idx = -1;
     for (int i = 0; i < DEX_SLOTS; i++) {
         if (!slot_used(i)) { if (free_idx < 0) free_idx = i; continue; }
         const uint8_t *p = slot_ptr(i);
+        if ((p[2] & GEN_MASK) != gen || p[5] > MAX_PAYLOAD) continue;
         int sp = (int)p[3] | ((int)p[4] << 8);
-        if (p[2] == gen && sp == species) { idx = i; break; }
+        if (mon_identity_needs_species(gen) && sp != species) continue;
+        if (mon_same_individual(gen, p + HDR_LEN, p[5], data, len)) { idx = i; break; }
     }
     if (idx < 0) idx = free_idx;
     if (idx < 0) return false;  // vault full
@@ -97,7 +104,7 @@ bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
     memset(slot, 0xFF, sizeof(slot));
     slot[0] = MAGIC[0];
     slot[1] = MAGIC[1];
-    slot[2] = (uint8_t)gen;
+    slot[2] = (uint8_t)(gen | (flags & FLAG_MASK));
     slot[3] = (uint8_t)(species & 0xFF);
     slot[4] = (uint8_t)((species >> 8) & 0xFF);
     slot[5] = (uint8_t)len;
@@ -135,7 +142,7 @@ uint16_t storage_read_slot(int index, int *gen, int *species, uint8_t *out, uint
         if (!slot_used(i)) continue;
         if (seen == index) {
             const uint8_t *p = slot_ptr(i);
-            if (gen) *gen = p[2];
+            if (gen) *gen = p[2] & GEN_MASK;
             if (species) *species = (int)p[3] | ((int)p[4] << 8);
             uint16_t len = p[5];
             if (len > MAX_PAYLOAD) return 0;
@@ -146,6 +153,33 @@ uint16_t storage_read_slot(int index, int *gen, int *species, uint8_t *out, uint
         seen++;
     }
     return 0;
+}
+
+// Physical slot number of the index-th used slot, or -1.
+static int physical_of_index(int index) {
+    if (index < 0) return -1;
+    int seen = 0;
+    for (int i = 0; i < DEX_SLOTS; i++) {
+        if (!slot_used(i)) continue;
+        if (seen == index) return i;
+        seen++;
+    }
+    return -1;
+}
+
+uint8_t storage_slot_flags(int index) {
+    int i = physical_of_index(index);
+    return i < 0 ? 0 : (uint8_t)(slot_ptr(i)[2] & FLAG_MASK);
+}
+
+int storage_slot_id(int index) { return physical_of_index(index); }
+
+int storage_index_of_id(int id) {
+    if (id < 0 || id >= DEX_SLOTS || !slot_used(id)) return -1;
+    int index = 0;
+    for (int i = 0; i < id; i++)
+        if (slot_used(i)) index++;
+    return index;
 }
 
 bool storage_delete(int index) {

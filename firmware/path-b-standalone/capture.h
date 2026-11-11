@@ -24,9 +24,11 @@ bool trade_capture_section(int index, uint8_t starter, bool sync, uint8_t preamb
                             const uint8_t *baked, int len, uint8_t *out);
 
 // Split a captured raw record into individual Pokémon (struct + OT + nickname
-// each). Applies the patch list, then copies up to 6 mons into data[]/lens[]
-// and their species into species[]. Returns the party count (0 on bad data).
-int extract_mons(const gen_profile_t *p, uint8_t *raw,
-                 uint8_t species[6], uint8_t data[6][DEX_MON_MAX], uint16_t lens[6]);
+// each). Applies the patch list, then copies up to 6 mons into data[]/lens[],
+// their species into species[] and their MON_FLAG_* bits into flags[] (a Gen 2
+// Egg is listed as such in the party's species list, not in its struct).
+// Returns the party count (0 on bad data).
+int extract_mons(const gen_profile_t *p, uint8_t *raw, uint8_t species[6],
+                 uint8_t data[6][DEX_MON_MAX], uint16_t lens[6], uint8_t flags[6]);
 
 #endif // CAPTURE_H

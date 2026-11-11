@@ -38,6 +38,9 @@ static inline int gp_is_mail_item(uint8_t item) {
     return item == 0x9E || (item >= 0xB5 && item <= 0xBD);
 }
 
+// Gen 2 party species-list entry for an Egg (the struct keeps the real species).
+#define GP_G2_EGG 0xFD
+
 // Per-mon record we store in the dex = struct + OT name + nickname (+ mail +
 // sender when the mon holds Mail). Gen 2 is the larger; fits MAX_PAYLOAD (120).
 #define DEX_MON_MAX (0x30 + 2 * 0x0B + 0x21 + 0x0E)  // 117

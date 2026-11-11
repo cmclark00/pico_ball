@@ -9,7 +9,8 @@
 // bytes of a real game — those come from the upstream engine and hardware runs.
 // It does pin down everything on our side of the wire: section framing, the
 // 0xFE patch lists in both directions, party splitting, mail, the commit
-// handshake (incl. Gen 2's Mew/Celebi success byte) and vaulting the mon we get.
+// handshake (incl. Gen 2's Mew/Celebi success byte), Gen 2 Eggs, vaulting the
+// mon we get, and the rule that decides when two records are the same Pokémon.
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -19,6 +20,7 @@
 #include "capture.h"
 #include "inject.h"
 #include "gen_profile.h"
+#include "mon_identity.h"
 #include "gb_link.h"
 #include "storage.h"
 #include "ui.h"
@@ -36,15 +38,18 @@ static int failures = 0;
 // --- storage stub ------------------------------------------------------------
 static struct {
     int calls, gen, species;
+    uint8_t flags;
     uint8_t data[DEX_MON_MAX];
     uint16_t len;
     bool accept;
 } store;
 
-bool storage_put_mon(int gen, int species, const uint8_t *data, uint16_t len) {
+bool storage_put_mon(int gen, int species, uint8_t flags,
+                     const uint8_t *data, uint16_t len) {
     store.calls++;
     store.gen = gen;
     store.species = species;
+    store.flags = flags;
     store.len = len;
     memcpy(store.data, data, len);
     return store.accept;
@@ -228,7 +233,8 @@ static void test_capture(int gen) {
     cp_mon(p, &cp, 0)[0x11] = 0xFE;
     cp_mon(p, &cp, 5)[0x05] = 0xFE;
     cp_mon(p, &cp, 5)[p->mon_len - 1] = 0xFE;
-    if (gen == 2) {   // slot 1 holds Mail
+    if (gen == 2) {   // slot 3 is an Egg, slot 1 holds Mail
+        cp.sec1[p->count_pos + 1 + 3] = GP_G2_EGG;
         cp_mon(p, &cp, 1)[1] = 0x9E;
         for (int j = 0; j < p->mail_len; j++) cp.sec3[1 * p->mail_len + j] = (uint8_t)(0x81 + j);
         for (int j = 0; j < p->mail_sender_len; j++)
@@ -246,8 +252,8 @@ static void test_capture(int gen) {
         CHECK(memcmp(sent_section(s), p->baked[s], p->lens[s]) == 0,
               "section %d: sent bytes differ from the baked partner", s);
 
-    uint8_t sp[6]; static uint8_t data[6][DEX_MON_MAX]; uint16_t lens[6];
-    int n = extract_mons(p, raw, sp, data, lens);
+    uint8_t sp[6]; static uint8_t data[6][DEX_MON_MAX]; uint16_t lens[6]; uint8_t fl[6];
+    int n = extract_mons(p, raw, sp, data, lens, fl);
     CHECK(n == 6, "extract_mons returned %d", n);
     for (int i = 0; i < n && i < 6; i++) {
         uint8_t want[DEX_MON_MAX];
@@ -259,6 +265,7 @@ static void test_capture(int gen) {
             wlen += p->mail_len + p->mail_sender_len;
         }
         CHECK(sp[i] == species[i], "mon %d species 0x%02X", i, sp[i]);
+        CHECK(fl[i] == ((gen == 2 && i == 3) ? MON_FLAG_EGG : 0), "mon %d flags 0x%02X", i, fl[i]);
         CHECK(lens[i] == wlen, "mon %d length %d (want %d)", i, lens[i], wlen);
         CHECK(memcmp(data[i], want, wlen) == 0, "mon %d bytes differ", i);
     }
@@ -266,7 +273,8 @@ static void test_capture(int gen) {
 
 // Run one inject and check the whole exchange. `ours`/`theirs` are species ids.
 static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
-                       int give_idx, uint8_t expect_success, bool vault_ok, bool with_mail) {
+                       int give_idx, uint8_t expect_success, bool vault_ok, bool with_mail,
+                       bool our_egg, bool their_egg) {
     printf("inject, Gen %d: %s\n", gen, name);
     const gen_profile_t *p = gen_profile(gen);
     static cart_party_t cp;
@@ -274,6 +282,7 @@ static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
     species[give_idx] = theirs;
     make_party(p, &cp, 4, species);
     cp_mon(p, &cp, give_idx)[0x12] = 0xFE;
+    if (their_egg) cp.sec1[p->count_pos + 1 + give_idx] = GP_G2_EGG;
     start_cart(p, &cp);
     uint8_t base = gen == 2 ? 0x70 : 0x60;
     cart.choice = (uint8_t)(base + give_idx);
@@ -294,7 +303,7 @@ static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
     memset(&store, 0, sizeof(store));
     store.accept = vault_ok;
     gb_inject_received_t got = {0xEE, true};
-    gb_inject_result_t r = inject_run(p, rec, rec_len, &got);
+    gb_inject_result_t r = inject_run(p, rec, rec_len, our_egg ? MON_FLAG_EGG : 0, &got);
     CHECK(r == GB_INJ_OK, "inject_run returned %d", (int)r);
 
     // Commit handshake: we offer slot 0, accept, and answer the success sync.
@@ -310,7 +319,8 @@ static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
         if (s1[j] == NO_INPUT) { CHECK(0, "raw 0xFE sent at party offset 0x%X", j); break; }
     game_unpatch(s1, sent_section(2), p->lens[2]);
     CHECK(s1[p->count_pos] == 1, "party count %d", s1[p->count_pos]);
-    CHECK(s1[p->count_pos + 1] == ours, "species list 0x%02X", s1[p->count_pos + 1]);
+    CHECK(s1[p->count_pos + 1] == (our_egg ? GP_G2_EGG : ours), "species list 0x%02X",
+          s1[p->count_pos + 1]);
     CHECK(memcmp(s1 + p->mon_pos, rec, p->mon_len) == 0, "mon struct differs");
     CHECK(memcmp(s1 + p->ot_pos, rec + p->mon_len, p->name_len) == 0, "OT name differs");
     CHECK(memcmp(s1 + p->nick_pos, rec + p->mon_len + p->name_len, p->name_len) == 0,
@@ -333,6 +343,7 @@ static void run_inject(const char *name, int gen, uint8_t ours, uint8_t theirs,
     CHECK(store.calls == 1, "storage_put_mon called %d times", store.calls);
     CHECK(store.gen == gen && store.species == theirs, "stored gen %d species 0x%02X",
           store.gen, store.species);
+    CHECK(store.flags == (their_egg ? MON_FLAG_EGG : 0), "stored flags 0x%02X", store.flags);
     CHECK(store.len == wlen && memcmp(store.data, want, wlen) == 0, "stored record differs");
     CHECK(got.species == theirs, "reported species 0x%02X", got.species);
     CHECK(got.stored == vault_ok, "reported stored=%d", got.stored);
@@ -352,7 +363,7 @@ static void test_inject_refusals(int gen) {
     start_cart(p, &cp);
     cart.choice = (uint8_t)(base + 0x0F);          // stop_trade
     memset(&store, 0, sizeof(store));
-    CHECK(inject_run(p, rec, rec_len, NULL) == GB_INJ_CANCELLED, "cancel not reported");
+    CHECK(inject_run(p, rec, rec_len, 0, NULL) == GB_INJ_CANCELLED, "cancel not reported");
     CHECK(store.calls == 0, "stored a mon on cancel");
 
     make_party(p, &cp, 2, species);
@@ -360,30 +371,68 @@ static void test_inject_refusals(int gen) {
     cart.choice = base;
     cart.accept = (uint8_t)(base + 1);             // decline
     memset(&store, 0, sizeof(store));
-    CHECK(inject_run(p, rec, rec_len, NULL) == GB_INJ_DECLINED, "decline not reported");
+    CHECK(inject_run(p, rec, rec_len, 0, NULL) == GB_INJ_DECLINED, "decline not reported");
     CHECK(store.calls == 0, "stored a mon on decline");
 
     cart.swaps = 0;
-    CHECK(inject_run(p, rec, (uint16_t)(rec_len - 1), NULL) == GB_INJ_BAD_RECORD,
+    CHECK(inject_run(p, rec, (uint16_t)(rec_len - 1), 0, NULL) == GB_INJ_BAD_RECORD,
           "short record accepted");
     CHECK(cart.swaps == 0, "talked to the cartridge with a bad record");
 }
 
+// The vault's "is this the same Pokémon?" rule (storage.c uses it to decide
+// between updating a slot and taking a new one).
+static void test_identity(void) {
+    printf("vault identity rule\n");
+    uint8_t a[DEX_MON_MAX], b[DEX_MON_MAX];
+    for (int gen = 1; gen <= 2; gen++) {
+        const gen_profile_t *p = gen_profile(gen);
+        uint16_t len = (uint16_t)(p->mon_len + 2 * p->name_len);
+        int ot = gen == 2 ? 0x06 : 0x0C, dv = gen == 2 ? 0x15 : 0x1B;
+        for (int j = 0; j < DEX_MON_MAX; j++) a[j] = (uint8_t)(j * 7 + 1);
+        memcpy(b, a, sizeof(a));
+        CHECK(mon_same_individual(gen, a, len, b, len), "Gen %d: identical records differ", gen);
+        // Levelled up, renamed, new moves, now holding mail: still the same mon.
+        for (int j = 0; j < DEX_MON_MAX; j++)
+            if (j != ot && j != ot + 1 && j != dv && j != dv + 1) b[j] ^= 0x5A;
+        CHECK(mon_same_individual(gen, a, len, b, (uint16_t)(len + 47)),
+              "Gen %d: a recapture should match", gen);
+        memcpy(b, a, sizeof(a)); b[dv + 1] ^= 1;
+        CHECK(!mon_same_individual(gen, a, len, b, len), "Gen %d: different DVs matched", gen);
+        memcpy(b, a, sizeof(a)); b[ot] ^= 1;
+        CHECK(!mon_same_individual(gen, a, len, b, len), "Gen %d: different OT ID matched", gen);
+        CHECK(mon_identity_needs_species(gen), "Gen %d must key on species", gen);
+    }
+    for (int j = 0; j < 100; j++) a[j] = (uint8_t)(j + 3);
+    memcpy(b, a, 100);
+    for (int j = 8; j < 100; j++) b[j] ^= 0xA5;       // everything but PID + OT ID
+    CHECK(mon_same_individual(3, a, 100, b, 100), "Gen 3: same PID/OTID should match");
+    b[3] ^= 1;
+    CHECK(!mon_same_individual(3, a, 100, b, 100), "Gen 3: different PID matched");
+    CHECK(!mon_identity_needs_species(3), "Gen 3 must follow a mon through evolution");
+    // Records too short to carry the key only match when identical.
+    CHECK(mon_same_individual(1, a, 4, a, 4), "short identical records differ");
+    CHECK(!mon_same_individual(1, a, 4, a, 5), "short records of different length matched");
+}
+
 int main(void) {
+    test_identity();
     test_capture(1);
     test_capture(2);
 
-    run_inject("plain trade", 1, 0x54, 0x99, 2, 0x60, true, false);
-    run_inject("vault full", 1, 0x54, 0x99, 0, 0x60, false, false);
-    run_inject("plain trade", 2, 25, 1, 3, 0x70, true, false);
-    run_inject("we trade in Mew", 2, 151, 1, 1, 0x71, true, false);
-    run_inject("cartridge gives Mew", 2, 25, 151, 1, 0x71, true, false);
-    run_inject("we trade in Celebi", 2, 251, 1, 0, 0x72, true, false);
-    run_inject("cartridge gives Celebi", 2, 25, 251, 2, 0x72, true, false);
-    run_inject("our mon holds Mail", 2, 25, 1, 0, 0x70, true, true);
-    run_inject("vault full", 2, 25, 1, 0, 0x70, false, false);
+    run_inject("plain trade", 1, 0x54, 0x99, 2, 0x60, true, false, false, false);
+    run_inject("vault full", 1, 0x54, 0x99, 0, 0x60, false, false, false, false);
+    run_inject("plain trade", 2, 25, 1, 3, 0x70, true, false, false, false);
+    run_inject("we trade in Mew", 2, 151, 1, 1, 0x71, true, false, false, false);
+    run_inject("cartridge gives Mew", 2, 25, 151, 1, 0x71, true, false, false, false);
+    run_inject("we trade in Celebi", 2, 251, 1, 0, 0x72, true, false, false, false);
+    run_inject("cartridge gives Celebi", 2, 25, 251, 2, 0x72, true, false, false, false);
+    run_inject("our mon holds Mail", 2, 25, 1, 0, 0x70, true, true, false, false);
+    run_inject("vault full", 2, 25, 1, 0, 0x70, false, false, false, false);
+    run_inject("we trade in an Egg", 2, 25, 1, 1, 0x70, true, false, true, false);
+    run_inject("cartridge gives an Egg", 2, 25, 1, 2, 0x70, true, false, false, true);
     // Gen 1 has no such check: Mew (internal 0x15) trades with the plain byte.
-    run_inject("Mew, no special byte", 1, 0x15, 0x99, 1, 0x60, true, false);
+    run_inject("Mew, no special byte", 1, 0x15, 0x99, 1, 0x60, true, false, false, false);
 
     test_inject_refusals(1);
     test_inject_refusals(2);

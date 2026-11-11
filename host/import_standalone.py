@@ -101,7 +101,7 @@ def _read_dump():
                       file=sys.stderr)
                 raise SystemExit(2)
             raise
-        records, buf = [], ""
+        records, eggs, buf = [], set(), ""
         deadline = time.time() + 15
         done = False
         while time.time() < deadline and not done:
@@ -115,9 +115,14 @@ def _read_dump():
                 if line.startswith("MON "):
                     parts = line.split(" ", 4)  # MON <gen> <species> <len> <hex>
                     records.append((int(parts[1]), int(parts[2]), bytes.fromhex(parts[4])))
+                elif line.startswith("EGG "):   # "EGG <index>": that entry is a Gen 2 Egg
+                    try:
+                        eggs.add(int(line.split()[1]))
+                    except (IndexError, ValueError):
+                        pass
                 elif line == "END":
                     done = True
-        return records
+        return [(g, s, r, i in eggs) for i, (g, s, r) in enumerate(records)]
     finally:
         usb.util.dispose_resources(dev)
 
@@ -180,10 +185,14 @@ def main():
                 t = engine.build_trader(_FakeLink(), verbose=False, sanity=True, gen=g)
                 engine.prime_capture_session(t)
                 traders[g] = t
-            for gen, species, rec in records:
+            for gen, species, rec, is_egg in records:
                 try:
                     path = _save_mon(traders, gen, rec, out_dir)
                     line = f"  Gen {gen} #{species:<3} -> {os.path.basename(path)}"
+                    if is_egg:
+                        # The saved record is the Pokémon inside the egg; only the
+                        # board keeps the egg state (and re-injects it as an Egg).
+                        line += "  [Egg on the board; saved as the Pokémon inside]"
                     if transfer and gen in (1, 2):
                         try:
                             pk3_path = _save_gen3_transfer(gen, rec, path)
